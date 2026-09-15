@@ -23,13 +23,12 @@ Android (MacroDroid) --POST--> GAS Web アプリ --> Gmail 送信
 ## 初回セットアップ（GAS 側・1 回だけ・済み）
 
 1. `clasp open-script` で GAS エディタを開く
-2. 関数 `setup` を実行 → 権限を承認
-3. 実行ログに出る `TOKEN = ...` を控える（端末側で使う）
-4. 「デプロイ」→「新しいデプロイ」→ 種類「ウェブアプリ」
-   - 実行ユーザー: 自分
-   - アクセス: 全員
-5. 発行された `https://script.google.com/macros/s/.../exec` を控える
-6. ブラウザでその URL を開き `{"ok":true,...}` が出れば OK
+2. 関数 `setup` を実行 → 権限を承認（log / filter シート作成、TOKEN 生成）
+3. 「デプロイ」→「新しいデプロイ」→ 種類「ウェブアプリ」（実行ユーザー: 自分 / アクセス: 全員）
+4. 表示された `https://script.google.com/macros/s/.../exec` をブラウザで開く
+   → 自分宛に「[SMS転送] スマホ側の設定手順（トークン入り）」メールが届く（URL・TOKEN・貼り付け用 Web params 入り）
+5. スマホでそのメールを開き、書いてある通りに SmsForwarder を設定する
+   （メールを再送したいときは URL の末尾に `?resend=1` を付けて開く）
 
 転送先を変えたいときはスクリプトプロパティ `MAIL_TO` に設定（未設定なら自分宛）。
 
