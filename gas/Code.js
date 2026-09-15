@@ -9,6 +9,7 @@
  * 設定はスクリプトプロパティ:
  *   TOKEN     : 端末側と共有する合言葉（必須）
  *   MAIL_TO   : 転送先メールアドレス（省略時はスクリプト実行者）
+ *   LABEL_MODE: Gmail ラベルの付け方 sim（既定）| device | none
  *
  * POST body (JSON または form):
  *   { token, device, sim, from, body, received_at }
@@ -170,8 +171,22 @@ function sendMail_(sms, to) {
     sms.body,
   ];
   GmailApp.sendEmail(recipient, subject, lines.join('\n'));
-  // ラベルは SIM のニックネームだけ（端末名は本文に載せるのみ）
-  if (sms.sim) labelLatest_(subject, [sms.sim]);
+  var labelName = labelFor_(sms);
+  if (labelName) labelLatest_(subject, [labelName]);
+}
+
+/**
+ * スクリプトプロパティ LABEL_MODE で Gmail ラベルの付け方を選ぶ
+ *   sim    : SIM のニックネーム（既定）
+ *   device : 端末名
+ *   none   : ラベルを付けない
+ */
+function labelFor_(sms) {
+  var mode = String(PropertiesService.getScriptProperties().getProperty('LABEL_MODE') || 'sim')
+    .trim().toLowerCase();
+  if (mode === 'none') return '';
+  if (mode === 'device') return sms.device || '';
+  return sms.sim || '';
 }
 
 /**
@@ -294,7 +309,7 @@ function sendSetupMail_(to, token, url) {
   h.push('<p>Rule → SMS → 「+」。条件は「All」、Sender は gas-sms、SIM は両方。保存してトグルを ON。</p>');
   h.push('<h3>6. 確認</h3>');
   h.push('<p>別の電話から SMS を 1 通送り、<b>[SMS] 番号</b> という件名のメールが届けば完了です。届かないときはスプレッドシートの <b>log</b> シートに理由が残ります。</p>');
-  h.push('<hr><p style="font-size:13px;color:#666">転送ルールの調整は <b>filter</b> シートで（type: allow / deny、field: from / body / device / sim、pattern: 正規表現）。TOKEN を変えたいときはスクリプトプロパティを消して setup を再実行。</p>');
+  h.push('<hr><p style="font-size:13px;color:#666">転送ルールの調整は <b>filter</b> シートで（type: allow / deny、field: from / body / device / sim、pattern: 正規表現）。Gmail のラベルは既定で SIM の名前が付きます。要らなければスクリプトプロパティ <b>LABEL_MODE</b> を <b>none</b>（端末名にするなら <b>device</b>）にしてください。TOKEN を変えたいときはスクリプトプロパティを消して setup を再実行。</p>');
   h.push('</div>');
 
   var plain = [
