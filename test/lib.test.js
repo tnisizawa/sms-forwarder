@@ -272,6 +272,7 @@ test('manifest enables Gmail v1 with only the planned scopes', () => {
     'https://www.googleapis.com/auth/gmail.modify',
     'https://www.googleapis.com/auth/spreadsheets.currentonly',
     'https://www.googleapis.com/auth/userinfo.email',
+    'https://www.googleapis.com/auth/script.container.ui',
   ]);
 });
 

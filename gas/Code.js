@@ -223,11 +223,7 @@ function appendLog_(sms, mailed, reason, settings, lockHeld) {
 function getSheet_(name, headers) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(name);
-  if (!sheet) {
-    sheet = ss.insertSheet(name);
-    sheet.appendRow(headers);
-    sheet.setFrozenRows(1);
-  }
+  if (!sheet) throw new Error('必要なシートがありません。SMS転送メニューの初期設定を実行してください。');
   return sheet;
 }
 
@@ -339,14 +335,8 @@ var APK_RELEASES_URL = 'https://github.com/pppscn/SmsForwarder/releases';
  */
 function setup() {
   labelCache_ = null;
-  getSheet_(SHEET_LOG, LOG_HEADERS);
-  getSheet_(SHEET_FILTER, ['type', 'field', 'pattern', 'memo']);
-  ensureSettingsSheet_();
-  var settings = loadSettings_();
-  var mailTo = settings.MAIL_TO || Session.getEffectiveUser().getEmail();
-  Logger.log('MAIL_TO = ' + mailTo);
-  Logger.log('準備完了。初回はウェブアプリを新規デプロイしてください。更新時は既存デプロイを編集して新バージョンへ更新し、URLを維持してください。公開 URL をブラウザで開くと、' +
-    mailTo + ' にスマホ用の手順メールが届きます。');
+  initSheets();
+  Logger.log('準備完了。ウェブアプリをデプロイ後、SMS転送メニューからスマホの設定手順を送れます。');
 }
 
 /**
@@ -428,4 +418,5 @@ function testSend() {
   if (verdict.pass) sendMail_(sms, settings);
   appendLog_(sms, verdict.pass, verdict.reason, settings);
   Logger.log(JSON.stringify(verdict));
+  return verdict;
 }

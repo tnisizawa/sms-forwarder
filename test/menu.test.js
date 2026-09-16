@@ -1,0 +1,215 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const gasDir = path.join(__dirname, '..', 'gas');
+const plain = value => JSON.parse(JSON.stringify(value));
+
+// Only these fake GAS boundaries exist in the VM: no require, process, fetch or credentials.
+function fixture(initial = {}, old = {}) {
+  let held = false;
+  let uuid = 0;
+  const calls = { writes: 0, created: [], logs: [], formats: [], validations: [], alerts: [], menu: [] };
+  const props = { ...old };
+  const sheets = {};
+  const write = () => { assert.equal(held, true, 'initialization write without lock'); calls.writes++; };
+  function makeSheet(name, rows) {
+    const data = plain(rows);
+    const protections = [];
+    const sheet = {
+      data, protections,
+      getLastRow: () => data.length,
+      getLastColumn: () => Math.max(0, ...data.map(row => row.length)),
+      getMaxRows: () => 1000,
+      getMaxColumns: () => 26,
+      getDataRange: () => ({ getValues: () => plain(data.length ? data : [['']]) }),
+      appendRow(row) { write(); data.push(plain(row)); },
+      setFrozenRows(n) { write(); assert.equal(n, 1); },
+      setColumnWidth(col, width) { write(); calls.formats.push([name, 'width', col, width]); },
+      getProtections: () => protections,
+      getRange(row, col, height = 1, width = 1) {
+        const key = typeof row === 'string' ? row : [row, col, height, width].join(':');
+        const range = {
+          getValues: () => Array.from({ length: height }, (_, i) => Array.from({ length: width }, (_, j) => (data[row - 1 + i] || [])[col - 1 + j] ?? '')),
+          getValue: () => (data[row - 1] || [])[col - 1] ?? '',
+          setValues(values) { write(); values.forEach((cells, i) => { data[row - 1 + i] ||= []; cells.forEach((v, j) => { data[row - 1 + i][col - 1 + j] = v; }); }); return range; },
+          setValue(v) { return range.setValues([[v]]); },
+          setFontWeight(v) { write(); calls.formats.push([name, key, 'weight', v]); return range; },
+          setNumberFormat(v) { write(); calls.formats.push([name, key, 'number', v]); return range; },
+          setWrap(v) { write(); calls.formats.push([name, key, 'wrap', v]); return range; },
+          setDataValidation(v) { write(); calls.validations.push([name, key, plain(v)]); return range; },
+          protect() { write(); const p = { getDescription: () => p.description, setDescription(v) { p.description = v; return p; }, setWarningOnly(v) { p.warning = v; return p; } }; protections.push(p); return p; },
+        };
+        return range;
+      },
+    };
+    return sheet;
+  }
+  Object.entries(initial).forEach(([name, rows]) => { sheets[name] = makeSheet(name, rows); });
+  const ss = { getSheetByName: name => sheets[name] || null, insertSheet(name) { write(); calls.created.push(name); return sheets[name] = makeSheet(name, []); } };
+  const lock = { waitLock() { held = true; }, releaseLock() { held = false; } };
+  const ui = {
+    createMenu(name) { calls.menu.push(name); return { addItem(label, handler) { calls.menu.push([label, handler]); return this; }, addToUi() { calls.menu.push('shown'); } }; },
+    alert(message) { assert.equal(held, false); calls.alerts.push(message); },
+  };
+  const validation = () => ({ values: null, invalid: null, requireValueInList(v) { this.values = plain(v); return this; }, setAllowInvalid(v) { this.invalid = v; return this; }, build() { return { values: this.values, invalid: this.invalid }; } });
+  const app = vm.createContext({
+    SpreadsheetApp: { getActiveSpreadsheet: () => ss, getUi: () => ui, flush() {}, newDataValidation: validation, ProtectionType: { RANGE: 'range' } },
+    PropertiesService: { getScriptProperties: () => ({ getProperties: () => ({ ...props }), getProperty: name => props[name] || null, deleteProperty(name) { write(); delete props[name]; }, setProperty(name, value) { props[name] = value; } }) },
+    LockService: { getScriptLock: () => lock },
+    Utilities: { getUuid: () => 'generated-' + (++uuid) },
+    Session: { getEffectiveUser: () => ({ getEmail: () => 'owner@example.invalid' }) },
+    Logger: { log(v) { calls.logs.push(v); } },
+    Gmail: { Users: { Messages: { send() { throw new Error('outbound denied'); } } } },
+    console: { warn() {}, error() {} },
+  });
+  for (const name of fs.readdirSync(gasDir).filter(name => name.endsWith('.js')).sort()) {
+    vm.runInContext(fs.readFileSync(path.join(gasDir, name), 'utf8'), app, { filename: name });
+  }
+  return { app, sheets, calls, props, lock, get held() { return held; }, snapshot: () => plain(Object.fromEntries(Object.entries(sheets).map(([name, s]) => [name, s.data]))) };
+}
+
+test('initSheets reproduces the three sheet schemas in an empty book', () => {
+  const f = fixture(); f.app.initSheets();
+  assert.deepEqual(Object.keys(f.sheets).sort(), ['filter', 'log', 'settings']);
+  assert.deepEqual(f.sheets.log.data[0], ['logged_at', 'received_at', 'device', 'from', 'body', 'mailed', 'reason', 'sim']);
+  assert.deepEqual(f.sheets.settings.data[0], ['項目', '値', '説明']);
+  assert.deepEqual(f.sheets.filter.data[0], ['type', 'field', 'pattern', 'memo']);
+  assert.equal(f.sheets.settings.data.length, 8);
+  assert.equal(f.sheets.filter.data.length, 3);
+  assert.equal(f.sheets.filter.data.slice(1).every(row => row[0] === ''), true);
+  assert.equal(f.held, false);
+});
+
+test('initSheets is value-idempotent including examples and protections', () => {
+  const f = fixture(); f.app.initSheets(); const before = f.snapshot(); f.app.initSheets();
+  assert.deepEqual(f.snapshot(), before);
+  assert.equal(f.sheets.settings.protections.length, 2);
+  assert.equal(f.calls.created.length, 3);
+});
+
+test('initSheets preserves existing values, active rules and log rows', () => {
+  const f = fixture(); f.app.initSheets();
+  f.sheets.settings.data[1][1] = 'kept-token';
+  f.sheets.settings.data[2][1] = 'receiver@example.invalid';
+  f.sheets.filter.data.push(['deny', 'body', 'blocked', 'custom']);
+  f.sheets.log.data.push(['date', 'date', 'device', '0000', 'body', 'no', 'denied', 'sim']);
+  const before = f.snapshot(); f.app.initSheets(); assert.deepEqual(f.snapshot(), before);
+});
+
+test('initSheets migrates legacy settings without clearing unrelated properties', () => {
+  const f = fixture({}, { TOKEN: 'legacy-token', MAIL_TO: 'legacy@example.invalid', LABEL_MODE: 'device', SETUP_MAIL_SENT: 'kept' });
+  f.app.initSheets(); const settings = f.app.loadSettings_();
+  assert.equal(settings.TOKEN, 'legacy-token'); assert.equal(settings.MAIL_TO, 'legacy@example.invalid'); assert.equal(settings.LABEL_MODE, 'device');
+  assert.deepEqual(f.props, { SETUP_MAIL_SENT: 'kept' });
+});
+
+test('initSheets regenerates an explicitly cleared token', () => {
+  const f = fixture(); f.app.initSheets(); const token = f.sheets.settings.data[1][1];
+  f.sheets.settings.data[1][1] = ''; f.props.TOKEN = 'stale'; f.app.initSheets();
+  assert.notEqual(f.sheets.settings.data[1][1], token); assert.notEqual(f.sheets.settings.data[1][1], 'stale');
+});
+
+test('initSheets checks all headers before writing any sheet', () => {
+  const f = fixture({ filter: [['wrong', 'field', 'pattern', 'memo'], ['deny', 'body', 'x', 'keep']] });
+  const before = f.snapshot(); assert.throws(() => f.app.initSheets(), /ヘッダー/);
+  assert.deepEqual(f.snapshot(), before); assert.equal(f.calls.writes, 0); assert.equal(f.held, false);
+});
+
+test('initSheets writes nothing if the shared script lock is unavailable', () => {
+  const f = fixture(); f.lock.waitLock = () => { throw new Error('busy'); };
+  assert.throws(() => f.app.initSheets(), /busy/); assert.equal(f.calls.writes, 0);
+});
+
+test('receiver sheet lookup cannot create missing sheets', () => {
+  const f = fixture(); assert.throws(() => f.app.getSheet_('log', []), /初期設定/); assert.deepEqual(f.calls.created, []);
+});
+
+test('setup delegates initialization without logging personal data', () => {
+  const f = fixture(); f.app.setup(); assert.equal(f.sheets.settings.data.length, 8);
+  assert.equal(f.calls.logs.some(v => /@|kept-token|generated/.test(v)), false);
+});
+
+test('initSheets separates header formatting from text, wrap and validation data ranges', () => {
+  const f = fixture(); f.app.initSheets();
+  assert.equal(f.calls.formats.some(v => v[0] === 'log' && v[1] === '2:4:999:1' && v[2] === 'number' && v[3] === '@'), true);
+  assert.equal(f.calls.formats.some(v => v[0] === 'log' && v[1] === '2:5:999:1' && v[2] === 'wrap' && v[3] === true), true);
+  assert.equal(f.calls.validations.some(v => v[0] === 'filter' && v[2].values.join(',') === 'allow,deny' && v[2].invalid === false), true);
+  assert.equal(f.calls.formats.filter(v => v[2] === 'weight').every(v => v[1].startsWith('1:')), true);
+});
+
+test('onOpen constructs exactly three menu items without touching settings or email', () => {
+  const f = fixture(); f.app.PropertiesService = undefined; f.app.Session = undefined; f.app.onOpen();
+  assert.deepEqual(f.calls.menu, ['SMS転送', ['初期設定', 'menuSetup'], ['スマホの設定手順をメールで送る', 'menuSendSetupMail'], ['テスト送信', 'menuTestSend'], 'shown']);
+  assert.equal(f.calls.writes, 0);
+});
+
+test('menuSetup initializes before showing the next-step dialog outside the lock', () => {
+  const f = fixture(); f.app.menuSetup(); assert.equal(f.sheets.settings.data.length, 8);
+  assert.equal(f.calls.alerts.length, 1); assert.equal(f.calls.alerts[0].includes('デプロイ'), true);
+});
+
+for (const url of [null, 'https://example.invalid/dev']) {
+  test('setup-mail menu refuses an undeployed or development URL: ' + (url ? 'development' : 'null'), () => {
+    const f = fixture(); f.app.initSheets(); f.app.ScriptApp = { getService: () => ({ getUrl: () => url }) };
+    f.app.sendSetupMail_ = () => { throw new Error('must not send'); }; f.app.menuSendSetupMail();
+    assert.equal(f.calls.alerts[0].includes('デプロイ'), true); assert.equal(f.props.SETUP_MAIL_SENT, undefined);
+  });
+}
+
+test('setup-mail menu refuses an uninitialized token', () => {
+  const f = fixture(); f.app.ScriptApp = { getService: () => ({ getUrl: () => 'https://example.invalid/exec' }) };
+  f.app.sendSetupMail_ = () => { throw new Error('must not send'); }; f.app.menuSendSetupMail();
+  assert.equal(f.calls.alerts[0].includes('初期設定'), true);
+});
+
+test('setup-mail menu explicitly resends to the owner and records successful send', () => {
+  const f = fixture(); f.app.initSheets(); f.sheets.settings.data[2][1] = 'receiver@example.invalid';
+  f.props.SETUP_MAIL_SENT = 'old'; f.app.ScriptApp = { getService: () => ({ getUrl: () => 'https://example.invalid/exec' }) };
+  let sent; f.app.sendSetupMail_ = (...args) => { sent = args; }; f.app.menuSendSetupMail();
+  assert.deepEqual(sent, ['owner@example.invalid', f.sheets.settings.data[1][1], 'https://example.invalid/exec']);
+  assert.notEqual(f.props.SETUP_MAIL_SENT, 'old'); assert.equal(f.calls.alerts[0].includes('送りました'), true);
+  assert.equal(f.calls.alerts[0].includes('@'), false);
+});
+
+test('setup-mail menu does not change the sent flag on send failure', () => {
+  const f = fixture(); f.app.initSheets(); f.props.SETUP_MAIL_SENT = 'old';
+  f.app.ScriptApp = { getService: () => ({ getUrl: () => 'https://example.invalid/exec' }) };
+  f.app.sendSetupMail_ = () => { throw new Error('send failed'); };
+  assert.throws(() => f.app.menuSendSetupMail(), /send failed/); assert.equal(f.props.SETUP_MAIL_SENT, 'old'); assert.equal(f.calls.alerts.length, 0);
+});
+
+for (const pass of [true, false]) {
+  test('test-send menu reports the actual filter outcome: ' + pass, () => {
+    const f = fixture(); f.app.testSend = () => ({ pass, reason: pass ? 'no allow rules' : 'deny matched' }); f.app.menuTestSend();
+    assert.equal(f.calls.alerts[0].includes(pass ? '送りました' : 'フィルター'), true);
+  });
+  test('testSend returns the verdict while preserving send and log behavior: ' + pass, () => {
+    const f = fixture(); f.app.initSheets();
+    if (!pass) f.sheets.filter.data.push(['deny', 'body', 'テスト', 'active']);
+    let sent = 0; let logged;
+    f.app.sendMail_ = () => { sent++; }; f.app.appendLog_ = (sms, mailed) => { logged = [sms.from, mailed]; };
+    const verdict = f.app.testSend(); assert.equal(verdict.pass, pass); assert.equal(sent, pass ? 1 : 0); assert.deepEqual(logged, ['0000', pass]);
+  });
+}
+
+test('menu handlers refuse to run without a bound spreadsheet UI', () => {
+  const f = fixture(); f.app.SpreadsheetApp.getUi = () => { throw new Error('no UI'); };
+  for (const handler of ['menuSetup', 'menuSendSetupMail', 'menuTestSend']) assert.throws(() => f.app[handler](), /no UI/);
+  assert.equal(f.calls.writes, 0);
+});
+
+test('sheet specifications document non-destructive initialization and the managed schemas', () => {
+  const spec = fs.readFileSync(path.join(gasDir, '..', 'docs', 'SHEETS_SPEC.md'), 'utf8');
+  for (const phrase of ['settings', 'log', 'filter', 'type空欄の例は無効', 'ヘッダー不一致では変更前に停止', '既存値とログは上書き・削除しない']) assert.equal(spec.includes(phrase), true);
+});
+
+test('operation and release documents distinguish menu authorization from public deployment', () => {
+  const read = name => fs.readFileSync(path.join(gasDir, '..', 'docs', name), 'utf8');
+  const operations = read('OPERATIONS.md'); const backlog = read('RELEASE_BACKLOG.md');
+  for (const phrase of ['初期設定', 'スマホの設定手順をメールで送る', 'テスト送信', 'script.container.ui', '端末側の合言葉も更新']) assert.equal(operations.includes(phrase), true);
+  for (const phrase of ['公開v16は未更新', '塊6', 'HEAD']) assert.equal(backlog.includes(phrase), true);
+});
