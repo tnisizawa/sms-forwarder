@@ -1,3 +1,6 @@
 .clasp-user
+.clasp.json
+.clasp-dev.json
+.clasp-dist.json
 *.log
 node_modules/
