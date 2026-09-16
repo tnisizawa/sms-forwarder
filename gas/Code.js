@@ -25,10 +25,15 @@ var LOG_HEADERS = [
 function doPost(e) {
   labelCache_ = null;
   var result;
+  var authenticated = false;
+  var settings;
+  var lock;
+  var lockHeld = false;
+  var mailed = false;
   var sms = { receivedAt: '', loggedAt: new Date(), device: '', sim: '', from: '', body: '' };
   try {
+    settings = loadSettings_();
     var data = parseRequest_(e);
-    var settings = loadSettings_();
     var token = settings.TOKEN;
     sms.receivedAt = data.received_at || '';
     sms.device = data.device || '';
@@ -42,25 +47,47 @@ function doPost(e) {
     }
 
     if (!token || data.token !== token) {
-      // 切り分け用に、届いたキー一覧だけ残す（値は残さない）
-      appendLog_(sms, false, 'unauthorized keys=' + Object.keys(data).join(','));
+      if (settings.LOG_UNAUTHORIZED === 'yes') {
+        appendLog_({ loggedAt: sms.loggedAt, receivedAt: '', device: '', sim: '', from: '', body: '' }, false, 'unauthorized', settings);
+      }
       return json_({ ok: false, error: 'unauthorized' });
     }
+    authenticated = true;
+    lock = LockService.getScriptLock();
+    lock.waitLock(30000);
+    lockHeld = true;
 
     var verdict = judge_(sms, loadRules_());
-    var mailed = false;
     if (verdict.pass) {
-      sendMail_(sms, settings);
-      mailed = true;
+      var cache = CacheService.getScriptCache();
+      var key = 'sms-v1-' + Utilities.base64EncodeWebSafe(Utilities.computeDigest(
+        Utilities.DigestAlgorithm.SHA_256, duplicateFingerprint_(sms), Utilities.Charset.UTF_8));
+      if (cache.get(key)) verdict.reason = 'duplicate';
+      else {
+        sendMail_(sms, settings);
+        mailed = true;
+        try { cache.put(key, 'sent', 600); }
+        catch (_) { console.warn('[doPost] cache recording failed after send'); }
+      }
     }
-    appendLog_(sms, mailed, verdict.reason);
+    try { appendLog_(sms, mailed, verdict.reason, settings, true); }
+    catch (logError) {
+      if (!mailed && verdict.reason !== 'duplicate') throw logError;
+      console.warn('[doPost] log recording failed after success');
+    }
     result = { ok: true, mailed: mailed, reason: verdict.reason };
   } catch (err) {
     console.error(err);
     try {
-      appendLog_(sms, false, 'error: ' + String(err));
+      if (authenticated && lockHeld) appendLog_(sms, false, 'error: processing failed', settings, true);
     } catch (_) {}
     result = { ok: false, error: String(err) };
+  } finally {
+    if (lockHeld) {
+      try { SpreadsheetApp.flush(); }
+      catch (_) { console.warn('[doPost] sheet flush failed'); }
+      finally { lock.releaseLock(); }
+    }
   }
   return json_(result);
 }
@@ -169,14 +196,28 @@ function findLabel_(labelName, refresh) {
   return labelCache_[labelName] || null;
 }
 
-function appendLog_(sms, mailed, reason) {
-  var sheet = getSheet_(SHEET_LOG, LOG_HEADERS);
-  if (sheet.getRange(1, 8).getValue() !== 'sim') sheet.getRange(1, 8).setValue('sim');
-  // 先頭の ' で電話番号を文字列として保存（0000 が 0 に化けるのを防ぐ）
-  sheet.appendRow([
-    sms.loggedAt, sms.receivedAt, sms.device, "'" + sms.from, sms.body,
-    mailed ? 'yes' : 'no', reason, sms.sim,
-  ]);
+function appendLog_(sms, mailed, reason, settings, lockHeld) {
+  var lock;
+  if (!lockHeld) {
+    lock = LockService.getScriptLock();
+    lock.waitLock(30000);
+  }
+  try {
+    var sheet = getSheet_(SHEET_LOG, LOG_HEADERS);
+    // 先頭の ' で電話番号を文字列として保存（0000 が 0 に化けるのを防ぐ）
+    sheet.appendRow([
+      sms.loggedAt, sms.receivedAt, sms.device, "'" + sms.from, sms.body,
+      mailed ? 'yes' : 'no', reason, sms.sim,
+    ]);
+    var maxRows = resolveLogMaxRows_((settings || loadSettings_()).LOG_MAX_ROWS);
+    var excess = logExcessRows_(sheet.getLastRow(), maxRows);
+    if (excess) sheet.deleteRows(2, excess);
+  } finally {
+    if (lock) {
+      try { SpreadsheetApp.flush(); }
+      finally { lock.releaseLock(); }
+    }
+  }
 }
 
 function getSheet_(name, headers) {
@@ -196,14 +237,14 @@ var SETTINGS_ROWS_ = [
   ['ラベルの付け方', 'SIM名', 'SIM名 / 端末名 / 固定名 / 付けない'],
   ['固定ラベル名', '', '「固定名」のときに使います'],
   ['親ラベル', 'SMS', 'この下にまとめます。空なら親ラベルを付けません'],
-  ['ログの保持行数', '', '塊3で利用します'],
+  ['ログの保持行数', 1000, 'ヘッダーを除く保持件数。超過分は古い行から自動削除。空欄・不正値は1000行'],
   ['未認証も記録する', 'いいえ', '切り分け時だけ「はい」にします']
 ];
 
 function loadSettings_() {
   var defaults = {
     TOKEN: '', MAIL_TO: '', LABEL_MODE: 'sim', LABEL_NAME: '', LABEL_PREFIX: 'SMS',
-    LOG_MAX_ROWS: '', LOG_UNAUTHORIZED: 'no'
+    LOG_MAX_ROWS: 1000, LOG_UNAUTHORIZED: 'no'
   };
   var props = null;
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_SETTINGS);
@@ -385,6 +426,6 @@ function testSend() {
   };
   var verdict = judge_(sms, loadRules_());
   if (verdict.pass) sendMail_(sms, settings);
-  appendLog_(sms, verdict.pass, verdict.reason);
+  appendLog_(sms, verdict.pass, verdict.reason, settings);
   Logger.log(JSON.stringify(verdict));
 }

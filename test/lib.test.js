@@ -388,3 +388,187 @@ test('resolveSetupToken_ distinguishes first migration from explicit regeneratio
   assert.equal(resolveSetupToken_([['項目', '値'], ['合言葉', 'current-value']], 'old-value', generate), 'current-value');
   assert.equal(resolveSetupToken_([['項目', '値']], '', generate), 'new-value');
 });
+
+function receiverFixture(settings = {}) {
+  const logs = [];
+  let sends = 0;
+  const cache = new Map();
+  let held = false;
+  const lock = {
+    waitLock() { held = true; },
+    releaseLock() { held = false; },
+  };
+  const app = loadApp({ console: { error() {}, warn() {} },
+    SpreadsheetApp: { flush() {} },
+    LockService: { getScriptLock: () => lock },
+    CacheService: { getScriptCache: () => ({
+      get: key => cache.get(key) || null,
+      put: (key, value) => { cache.set(key, value); },
+    }) },
+    Utilities: {
+      DigestAlgorithm: { SHA_256: 'sha256' }, Charset: { UTF_8: 'utf8' },
+      computeDigest: (algorithm, text) => Array.from(require('node:crypto').createHash(algorithm).update(text).digest()),
+      base64EncodeWebSafe: bytes => Buffer.from(bytes).toString('base64url'),
+    },
+  });
+  app.loadSettings_ = () => ({ TOKEN: 'fixture-secret', LOG_UNAUTHORIZED: 'no', ...settings });
+  app.loadRules_ = () => [];
+  app.sendMail_ = () => { sends++; };
+  app.appendLog_ = (sms, mailed, reason) => { logs.push({ sms, mailed, reason }); };
+  app.json_ = value => value;
+  return { app, logs, cache, lock, held: () => held, sends: () => sends };
+}
+
+function receiverEvent(extra = {}) {
+  return { postData: { contents: JSON.stringify({
+    token: 'fixture-secret', device: 'fixture-device', sim: 'SIM1_fixture',
+    from: 'fixture-number', body: 'fixture-body', received_at: '2026-09-16T00:00:00Z', ...extra,
+  }) } };
+}
+
+test('doPost does not log unauthorized requests by default', () => {
+  const f = receiverFixture();
+  assert.equal(f.app.doPost(receiverEvent({ token: 'wrong' })).ok, false);
+  assert.equal(f.logs.length, 0);
+  assert.equal(f.sends(), 0);
+});
+
+test('doPost does not log errors before authentication', () => {
+  const f = receiverFixture();
+  assert.equal(f.app.doPost({}).ok, false);
+  assert.equal(f.logs.length, 0);
+});
+
+test('doPost diagnostic unauthorized logs contain no request values', () => {
+  const f = receiverFixture({ LOG_UNAUTHORIZED: 'yes' });
+  f.app.doPost(receiverEvent({ token: 'wrong', 'fixture-private-key': 'private' }));
+  assert.equal(f.logs.length, 1);
+  assert.doesNotMatch(JSON.stringify(f.logs), /fixture-number|fixture-body|fixture-device|fixture-private-key|wrong/);
+});
+
+test('doPost sends the same SMS only once during cache retention', () => {
+  const f = receiverFixture();
+  assert.equal(f.app.doPost(receiverEvent()).mailed, true);
+  assert.equal(f.app.doPost(receiverEvent()).reason, 'duplicate');
+  assert.equal(f.sends(), 1);
+  assert.equal(f.held(), false);
+  assert.doesNotMatch(JSON.stringify([...f.cache]), /fixture-secret|fixture-body|fixture-number/);
+});
+
+test('doPost sends different received times separately', () => {
+  const f = receiverFixture();
+  f.app.doPost(receiverEvent());
+  f.app.doPost(receiverEvent({ received_at: '2026-09-16T00:00:01Z' }));
+  assert.equal(f.sends(), 2);
+});
+
+test('doPost permits retry after a send failure', () => {
+  const f = receiverFixture();
+  const send = f.app.sendMail_;
+  f.app.sendMail_ = () => { throw new Error('send failed'); };
+  assert.equal(f.app.doPost(receiverEvent()).ok, false);
+  f.app.sendMail_ = send;
+  assert.equal(f.app.doPost(receiverEvent()).mailed, true);
+  assert.equal(f.held(), false);
+});
+
+test('doPost does not write or send without a lock', () => {
+  const f = receiverFixture();
+  f.lock.waitLock = () => { throw new Error('busy'); };
+  assert.equal(f.app.doPost(receiverEvent()).ok, false);
+  assert.equal(f.logs.length, 0);
+  assert.equal(f.sends(), 0);
+});
+
+test('doPost keeps a sent message successful when logging fails', () => {
+  const f = receiverFixture();
+  f.app.appendLog_ = () => { throw new Error('log unavailable'); };
+  assert.equal(f.app.doPost(receiverEvent()).ok, true);
+  assert.equal(f.app.doPost(receiverEvent()).mailed, false);
+  assert.equal(f.sends(), 1);
+});
+
+test('doPost keeps a sent message successful when cache recording fails', () => {
+  const f = receiverFixture();
+  f.app.CacheService.getScriptCache = () => ({ get: () => null, put() { throw new Error('cache unavailable'); } });
+  assert.equal(f.app.doPost(receiverEvent()).mailed, true);
+  assert.equal(f.held(), false);
+});
+
+test('duplicateFingerprint_ separates message fields unambiguously', () => {
+  const { duplicateFingerprint_ } = loadLib();
+  const sms = { device: 'a', sim: 'b', from: 'c', body: 'd', receivedAt: 'e' };
+  assert.equal(duplicateFingerprint_(sms), duplicateFingerprint_({ ...sms }));
+  for (const key of Object.keys(sms)) {
+    assert.notEqual(duplicateFingerprint_(sms), duplicateFingerprint_({ ...sms, [key]: sms[key] + 'x' }));
+  }
+  assert.notEqual(duplicateFingerprint_({ device: 'a|b', sim: 'c' }), duplicateFingerprint_({ device: 'a', sim: 'b|c' }));
+});
+
+test('resolveLogMaxRows_ accepts positive integers and falls back safely', () => {
+  const { resolveLogMaxRows_ } = loadLib();
+  assert.equal(resolveLogMaxRows_('2'), 2);
+  for (const value of ['', '0', '-1', '1.5', 'abc', 'Infinity', '9007199254740992']) {
+    assert.equal(resolveLogMaxRows_(value), 1000);
+  }
+});
+
+test('logExcessRows_ excludes the header from the retention count', () => {
+  const { logExcessRows_ } = loadLib();
+  assert.equal(logExcessRows_(1, 2), 0);
+  assert.equal(logExcessRows_(3, 2), 0);
+  assert.equal(logExcessRows_(5, 2), 2);
+});
+
+test('appendLog_ deletes only oldest data rows under its own lock', () => {
+  const rows = [Array.from({ length: 8 }, (_, i) => 'header-' + i), ['old'], ['keep']];
+  let held = false;
+  const lock = { waitLock() { held = true; }, releaseLock() { held = false; } };
+  const app = loadApp({
+    LockService: { getScriptLock: () => lock },
+    SpreadsheetApp: { flush() { assert.equal(held, true); } },
+  });
+  app.getSheet_ = () => ({
+    appendRow(row) { assert.equal(held, true); rows.push(Array.from(row)); },
+    getLastRow: () => rows.length,
+    deleteRows(start, count) { assert.equal(held, true); rows.splice(start - 1, count); },
+  });
+  app.appendLog_({ loggedAt: new Date(), receivedAt: '', device: '', sim: '', from: '0000', body: 'new' }, true, 'sent', { LOG_MAX_ROWS: '2' });
+  assert.equal(rows.length, 3);
+  assert.equal(rows[0][0], 'header-0');
+  assert.equal(rows[1][0], 'keep');
+  assert.equal(rows[2][3], "'0000");
+  assert.equal(held, false);
+});
+
+test('appendLog_ does not reacquire a caller-owned lock', () => {
+  const app = loadApp({ LockService: { getScriptLock() { throw new Error('reacquired'); } } });
+  app.getSheet_ = () => ({ appendRow() {}, getLastRow: () => 1 });
+  assert.doesNotThrow(() => app.appendLog_({}, false, 'duplicate', { LOG_MAX_ROWS: '2' }, true));
+});
+
+test('doPost keeps a sent message successful when sheet flush fails', () => {
+  const f = receiverFixture();
+  f.app.SpreadsheetApp.flush = () => { throw new Error('flush failed'); };
+  assert.equal(f.app.doPost(receiverEvent()).mailed, true);
+  assert.equal(f.held(), false);
+});
+
+test('doPost rechecks delivery after cache eviction', () => {
+  const f = receiverFixture();
+  f.app.doPost(receiverEvent());
+  f.cache.clear();
+  assert.equal(f.app.doPost(receiverEvent()).mailed, true);
+  assert.equal(f.sends(), 2);
+});
+
+test('doPost protects send and cache recording inside one lock', () => {
+  const f = receiverFixture();
+  const send = f.app.sendMail_;
+  f.app.sendMail_ = () => { assert.equal(f.held(), true); send(); };
+  f.app.CacheService.getScriptCache = () => ({
+    get() { assert.equal(f.held(), true); return null; },
+    put() { assert.equal(f.held(), true); },
+  });
+  assert.equal(f.app.doPost(receiverEvent()).mailed, true);
+});

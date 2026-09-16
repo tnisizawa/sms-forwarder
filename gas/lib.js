@@ -167,6 +167,21 @@ function parseSettingsRows_(rows) {
   return settings;
 }
 
+function resolveLogMaxRows_(value) {
+  var n = Number(value);
+  return Number.isSafeInteger(n) && n > 0 ? n : 1000;
+}
+
+function logExcessRows_(lastRow, maxRows) {
+  return Math.max(0, lastRow - 1 - maxRows);
+}
+
+function duplicateFingerprint_(sms) {
+  return JSON.stringify(['device', 'sim', 'from', 'body', 'receivedAt'].map(function (key) {
+    return String(sms[key] || '');
+  }));
+}
+
 function resolveSetupToken_(rows, legacyToken, generateToken) {
   for (var i = 1; i < rows.length; i++) {
     if (String(rows[i][0] || '').trim() === '合言葉') {
