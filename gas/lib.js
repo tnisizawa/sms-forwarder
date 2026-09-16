@@ -66,3 +66,112 @@ function parseRequest_(e) {
     return e.parameter || {};
   }
 }
+
+function sanitizeMimeHeader_(value) {
+  return String(value || '').replace(/[\r\n]+/g, ' ').trim();
+}
+
+function normalizeCrlf_(value) {
+  return String(value || '').replace(/\r\n|\r|\n/g, '\r\n');
+}
+
+function encodeMimeSubject_(subject, encodeBase64) {
+  return '=?UTF-8?B?' + encodeBase64(sanitizeMimeHeader_(subject)) + '?=';
+}
+
+function buildTextMime_(to, subject, body, encodeBase64) {
+  return [
+    'To: ' + sanitizeMimeHeader_(to),
+    'Subject: ' + encodeMimeSubject_(subject, encodeBase64),
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset=UTF-8',
+    'Content-Transfer-Encoding: 8bit',
+    '',
+    normalizeCrlf_(body)
+  ].join('\r\n');
+}
+
+function buildMultipartMime_(to, subject, plain, html, boundary, encodeBase64) {
+  var safeBoundary = sanitizeMimeHeader_(boundary).replace(/["\\]/g, '');
+  return [
+    'To: ' + sanitizeMimeHeader_(to),
+    'Subject: ' + encodeMimeSubject_(subject, encodeBase64),
+    'MIME-Version: 1.0',
+    'Content-Type: multipart/alternative; boundary="' + safeBoundary + '"',
+    '',
+    '--' + safeBoundary,
+    'Content-Type: text/plain; charset=UTF-8',
+    'Content-Transfer-Encoding: 8bit',
+    '',
+    normalizeCrlf_(plain),
+    '--' + safeBoundary,
+    'Content-Type: text/html; charset=UTF-8',
+    'Content-Transfer-Encoding: 8bit',
+    '',
+    normalizeCrlf_(html),
+    '--' + safeBoundary + '--'
+  ].join('\r\n');
+}
+
+function resolveLabelName_(sms, settings) {
+  var mode = String(settings.LABEL_MODE || 'sim').trim().toLowerCase();
+  var name = '';
+  if (mode === 'sim') name = simName_(sms.sim);
+  if (mode === 'device') name = String(sms.device || '').trim();
+  if (mode === 'fixed') name = String(settings.LABEL_NAME || '').trim();
+  if (!name || mode === 'none') return '';
+
+  var prefix = String(settings.LABEL_PREFIX || '').trim();
+  return prefix ? prefix + '/' + name : name;
+}
+
+var SETTING_KEYS_ = {
+  '合言葉': 'TOKEN',
+  '転送先アドレス': 'MAIL_TO',
+  'ラベルの付け方': 'LABEL_MODE',
+  '固定ラベル名': 'LABEL_NAME',
+  '親ラベル': 'LABEL_PREFIX',
+  'ログの保持行数': 'LOG_MAX_ROWS',
+  '未認証も記録する': 'LOG_UNAUTHORIZED'
+};
+
+var SETTING_DISPLAY_VALUES_ = {
+  LABEL_MODE: {
+    'SIM名': 'sim',
+    '端末名': 'device',
+    '固定名': 'fixed',
+    '付けない': 'none'
+  },
+  LOG_UNAUTHORIZED: {
+    'はい': 'yes',
+    'いいえ': 'no'
+  }
+};
+
+function parseSettingsRows_(rows) {
+  var settings = {};
+  for (var i = 1; i < rows.length; i++) {
+    var item = String(rows[i][0] || '').trim();
+    var key = SETTING_KEYS_[item];
+    if (!key) continue;
+
+    var value = String(rows[i][1] || '').trim();
+    if (key === 'TOKEN' && !value) continue;
+    var choices = SETTING_DISPLAY_VALUES_[key];
+    if (choices) {
+      if (!Object.prototype.hasOwnProperty.call(choices, value)) continue;
+      value = choices[value];
+    }
+    settings[key] = value;
+  }
+  return settings;
+}
+
+function resolveSetupToken_(rows, legacyToken, generateToken) {
+  for (var i = 1; i < rows.length; i++) {
+    if (String(rows[i][0] || '').trim() === '合言葉') {
+      return String(rows[i][1] || '').trim() || generateToken();
+    }
+  }
+  return legacyToken || generateToken();
+}

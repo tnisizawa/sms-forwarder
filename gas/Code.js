@@ -1,3 +1,5 @@
+/** @OnlyCurrentDoc */
+
 /**
  * SMS Forwarder 受け口（GAS Web アプリ）
  *
@@ -6,10 +8,7 @@
  *   2. フィルター（「filter」シート）を通過したら Gmail で自分宛に送信
  * する。
  *
- * 設定はスクリプトプロパティ:
- *   TOKEN     : 端末側と共有する合言葉（必須）
- *   MAIL_TO   : 転送先メールアドレス（省略時はスクリプト実行者）
- *   LABEL_MODE: Gmail ラベルの付け方 sim（既定）| device | none
+ * 設定は settings シート。旧スクリプトプロパティは初回 setup 時に移行する。
  *
  * POST body (JSON または form):
  *   { token, device, sim, from, body, received_at }
@@ -18,17 +17,19 @@
 
 var SHEET_LOG = 'log';
 var SHEET_FILTER = 'filter';
+var SHEET_SETTINGS = 'settings';
 var LOG_HEADERS = [
   'logged_at', 'received_at', 'device', 'from', 'body', 'mailed', 'reason', 'sim',
 ];
 
 function doPost(e) {
+  labelCache_ = null;
   var result;
   var sms = { receivedAt: '', loggedAt: new Date(), device: '', sim: '', from: '', body: '' };
   try {
     var data = parseRequest_(e);
-    var props = PropertiesService.getScriptProperties();
-    var token = props.getProperty('TOKEN');
+    var settings = loadSettings_();
+    var token = settings.TOKEN;
     sms.receivedAt = data.received_at || '';
     sms.device = data.device || '';
     sms.from = data.from || '';
@@ -49,7 +50,7 @@ function doPost(e) {
     var verdict = judge_(sms, loadRules_());
     var mailed = false;
     if (verdict.pass) {
-      sendMail_(sms, props.getProperty('MAIL_TO'));
+      sendMail_(sms, settings);
       mailed = true;
     }
     appendLog_(sms, mailed, verdict.reason);
@@ -70,14 +71,16 @@ function doPost(e) {
  *   - 2 回目以降: 生存確認だけ返す
  */
 function doGet(e) {
+  labelCache_ = null;
   var props = PropertiesService.getScriptProperties();
-  var token = props.getProperty('TOKEN');
+  var settings = loadSettings_();
+  var token = settings.TOKEN;
   if (!token) {
     return html_('<p>まだ準備ができていません。GAS エディタで <b>setup</b> を実行してから、もう一度この URL を開いてください。</p>');
   }
   var resend = e && e.parameter && e.parameter.resend;
   if (!props.getProperty('SETUP_MAIL_SENT') || resend) {
-    var mailTo = props.getProperty('MAIL_TO') || Session.getEffectiveUser().getEmail();
+    var mailTo = settings.MAIL_TO || Session.getEffectiveUser().getEmail();
     sendSetupMail_(mailTo, token, ScriptApp.getService().getUrl());
     props.setProperty('SETUP_MAIL_SENT', new Date().toISOString());
     return html_('<p>スマホ側の設定手順を <b>' + mailTo + '</b> に送りました。スマホでそのメールを開いて進めてください。</p>' +
@@ -102,8 +105,8 @@ function loadRules_() {
   return parseRuleRows_(sheet.getDataRange().getValues());
 }
 
-function sendMail_(sms, to) {
-  var recipient = to || Session.getEffectiveUser().getEmail();
+function sendMail_(sms, settings) {
+  var recipient = settings.MAIL_TO || Session.getEffectiveUser().getEmail();
   // 件名は送信元だけ（同じ番号からのメールが Gmail で 1 スレッドにまとまる）
   var subject = '[SMS] ' + sms.from;
   var lines = [
@@ -114,41 +117,56 @@ function sendMail_(sms, to) {
     '',
     sms.body,
   ];
-  GmailApp.sendEmail(recipient, subject, lines.join('\n'));
-  var labelName = labelFor_(sms);
-  if (labelName) labelLatest_(subject, [labelName]);
-}
-
-/**
- * スクリプトプロパティ LABEL_MODE で Gmail ラベルの付け方を選ぶ
- *   sim    : SIM のニックネーム（既定）
- *   device : 端末名
- *   none   : ラベルを付けない
- */
-function labelFor_(sms) {
-  var mode = String(PropertiesService.getScriptProperties().getProperty('LABEL_MODE') || 'sim')
-    .trim().toLowerCase();
-  if (mode === 'none') return '';
-  if (mode === 'device') return sms.device || '';
-  return sms.sim || '';
-}
-
-/**
- * 送ったばかりのメールのスレッドにラベルを付ける（無ければ作る）
- */
-function labelLatest_(subject, labelNames) {
-  var labels = labelNames.map(function (name) {
-    return GmailApp.getUserLabelByName(name) || GmailApp.createLabel(name);
-  });
-  for (var i = 0; i < 5; i++) {
-    var threads = GmailApp.search('subject:"' + subject + '" newer_than:1d', 0, 1);
-    if (threads.length) {
-      labels.forEach(function (label) { threads[0].addLabel(label); });
-      return;
+  var mime = buildTextMime_(recipient, subject, lines.join('\n'), encodeBase64_);
+  var sent = Gmail.Users.Messages.send({ raw: encodeRaw_(mime) }, 'me');
+  var labelName = resolveLabelName_(sms, settings);
+  if (labelName) {
+    try {
+      addLabel_(sent.id, labelName);
+    } catch (err) {
+      // 送信済みメールを端末側に再送させないため、ラベル失敗は送信失敗にしない。
+      console.warn('label failed: ' + String(err));
     }
-    Utilities.sleep(1000);
   }
-  console.warn('label skipped: thread not found for ' + subject);
+}
+
+function encodeBase64_(value) {
+  return Utilities.base64Encode(String(value), Utilities.Charset.UTF_8);
+}
+
+function encodeRaw_(mime) {
+  return Utilities.base64EncodeWebSafe(mime, Utilities.Charset.UTF_8);
+}
+
+var labelCache_ = null;
+
+function addLabel_(messageId, labelName) {
+  var resolvedLabel = findLabel_(labelName);
+  if (!resolvedLabel) {
+    try {
+      resolvedLabel = Gmail.Users.Labels.create({
+        name: labelName,
+        labelListVisibility: 'labelShow',
+        messageListVisibility: 'show'
+      }, 'me');
+      labelCache_[labelName] = resolvedLabel;
+    } catch (err) {
+      // 同時実行が先に作成した場合だけ、そのラベルを取得して続行する。
+      resolvedLabel = findLabel_(labelName, true);
+      if (!resolvedLabel) throw err;
+    }
+  }
+  var labelId = resolvedLabel.id;
+  Gmail.Users.Messages.modify({ addLabelIds: [labelId] }, 'me', messageId);
+}
+
+function findLabel_(labelName, refresh) {
+  if (!labelCache_ || refresh) {
+    var labels = Gmail.Users.Labels.list('me').labels || [];
+    labelCache_ = Object.create(null);
+    for (var i = 0; i < labels.length; i++) labelCache_[labels[i].name] = labels[i];
+  }
+  return labelCache_[labelName] || null;
 }
 
 function appendLog_(sms, mailed, reason) {
@@ -172,6 +190,97 @@ function getSheet_(name, headers) {
   return sheet;
 }
 
+var SETTINGS_ROWS_ = [
+  ['合言葉', '', 'スマホと共有する合言葉。消して setup を実行すると作り直されます'],
+  ['転送先アドレス', '', '空なら自分宛に送ります'],
+  ['ラベルの付け方', 'SIM名', 'SIM名 / 端末名 / 固定名 / 付けない'],
+  ['固定ラベル名', '', '「固定名」のときに使います'],
+  ['親ラベル', 'SMS', 'この下にまとめます。空なら親ラベルを付けません'],
+  ['ログの保持行数', '', '塊3で利用します'],
+  ['未認証も記録する', 'いいえ', '切り分け時だけ「はい」にします']
+];
+
+function loadSettings_() {
+  var defaults = {
+    TOKEN: '', MAIL_TO: '', LABEL_MODE: 'sim', LABEL_NAME: '', LABEL_PREFIX: 'SMS',
+    LOG_MAX_ROWS: '', LOG_UNAUTHORIZED: 'no'
+  };
+  var props = null;
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_SETTINGS);
+  var sheetValues = sheet ? parseSettingsRows_(sheet.getDataRange().getValues()) : {};
+  Object.keys(defaults).forEach(function (key) {
+    if (Object.prototype.hasOwnProperty.call(sheetValues, key)) defaults[key] = sheetValues[key];
+    else {
+      if (!props) props = PropertiesService.getScriptProperties().getProperties();
+      if (Object.prototype.hasOwnProperty.call(props, key)) defaults[key] = props[key];
+    }
+  });
+  return defaults;
+}
+
+function ensureSettingsSheet_() {
+  var sheet = getSheet_(SHEET_SETTINGS, ['項目', '値', '説明']);
+  var props = PropertiesService.getScriptProperties();
+  var old = props.getProperties();
+  var existing = {};
+  var values = sheet.getDataRange().getValues();
+  for (var i = 1; i < values.length; i++) existing[String(values[i][0] || '').trim()] = i + 1;
+
+  var token = resolveSetupToken_(values, old.TOKEN, function () {
+    return Utilities.getUuid().replace(/-/g, '');
+  });
+  var initial = {
+    '合言葉': token,
+    '転送先アドレス': old.MAIL_TO || '',
+    'ラベルの付け方': { sim: 'SIM名', device: '端末名', fixed: '固定名', none: '付けない' }[
+      String(old.LABEL_MODE || 'sim').trim().toLowerCase()
+    ] || 'SIM名'
+  };
+  SETTINGS_ROWS_.forEach(function (definition) {
+    var item = definition[0];
+    if (!existing[item]) {
+      sheet.appendRow([item, Object.prototype.hasOwnProperty.call(initial, item) ? initial[item] : definition[1], definition[2]]);
+    } else if (item === '合言葉' && !sheet.getRange(existing[item], 2).getValue()) {
+      sheet.getRange(existing[item], 2).setValue(token);
+    }
+  });
+  sheet.setFrozenRows(1);
+  applySettingsRules_(sheet);
+
+  var migrated = parseSettingsRows_(sheet.getDataRange().getValues());
+  if (migrated.TOKEN && Object.prototype.hasOwnProperty.call(migrated, 'MAIL_TO') && migrated.LABEL_MODE) {
+    props.deleteProperty('TOKEN');
+    props.deleteProperty('MAIL_TO');
+    props.deleteProperty('LABEL_MODE');
+  }
+  return sheet;
+}
+
+function applySettingsRules_(sheet) {
+  var values = sheet.getRange(2, 1, Math.max(sheet.getLastRow() - 1, 1), 1).getValues();
+  for (var i = 0; i < values.length; i++) {
+    var item = values[i][0];
+    if (item === 'ラベルの付け方') {
+      sheet.getRange(i + 2, 2).setDataValidation(SpreadsheetApp.newDataValidation()
+        .requireValueInList(['SIM名', '端末名', '固定名', '付けない'], true).setAllowInvalid(false).build());
+    }
+    if (item === '未認証も記録する') {
+      sheet.getRange(i + 2, 2).setDataValidation(SpreadsheetApp.newDataValidation()
+        .requireValueInList(['はい', 'いいえ'], true).setAllowInvalid(false).build());
+    }
+  }
+  ensureWarningProtection_(sheet, sheet.getRange('A:A'), 'settings-items');
+  ensureWarningProtection_(sheet, sheet.getRange('C:C'), 'settings-descriptions');
+}
+
+function ensureWarningProtection_(sheet, range, description) {
+  var protections = sheet.getProtections(SpreadsheetApp.ProtectionType.RANGE);
+  for (var i = 0; i < protections.length; i++) {
+    if (protections[i].getDescription() === description) return;
+  }
+  range.protect().setDescription(description).setWarningOnly(true);
+}
+
 function json_(obj) {
   return ContentService
     .createTextOutput(JSON.stringify(obj))
@@ -188,17 +297,14 @@ var APK_RELEASES_URL = 'https://github.com/pppscn/SmsForwarder/releases';
  *   - スマホ用の手順メールは、デプロイ後に公開 URL を開いたとき doGet が送る
  */
 function setup() {
+  labelCache_ = null;
   getSheet_(SHEET_LOG, LOG_HEADERS);
   getSheet_(SHEET_FILTER, ['type', 'field', 'pattern', 'memo']);
-  var props = PropertiesService.getScriptProperties();
-  if (!props.getProperty('TOKEN')) {
-    props.setProperty('TOKEN', Utilities.getUuid().replace(/-/g, ''));
-  }
-  var token = props.getProperty('TOKEN');
-  var mailTo = props.getProperty('MAIL_TO') || Session.getEffectiveUser().getEmail();
-  Logger.log('TOKEN = ' + token);
+  ensureSettingsSheet_();
+  var settings = loadSettings_();
+  var mailTo = settings.MAIL_TO || Session.getEffectiveUser().getEmail();
   Logger.log('MAIL_TO = ' + mailTo);
-  Logger.log('準備完了。次に「デプロイ」→「新しいデプロイ」→「ウェブアプリ」で公開し、表示された URL をブラウザで開くと、' +
+  Logger.log('準備完了。初回はウェブアプリを新規デプロイしてください。更新時は既存デプロイを編集して新バージョンへ更新し、URLを維持してください。公開 URL をブラウザで開くと、' +
     mailTo + ' にスマホ用の手順メールが届きます。');
 }
 
@@ -219,7 +325,7 @@ function sendSetupMail_(to, token, url) {
   h.push('<div style="font-family:sans-serif;font-size:15px;line-height:1.7">');
   h.push('<p>SMS 転送の受け口（GAS）の準備ができました。このメールをスマホで開いて、上から順に進めてください。</p>');
   if (!deployed) {
-    h.push('<p style="color:#b00"><b>注意:</b> ウェブアプリの URL が取れませんでした。GAS エディタで「デプロイ」→「新しいデプロイ」→「ウェブアプリ」（実行ユーザー: 自分 / アクセス: 全員）を済ませてから、もう一度 <code>setup</code> を実行してください。</p>');
+    h.push('<p style="color:#b00"><b>注意:</b> ウェブアプリの URL が取れませんでした。初回はウェブアプリ（実行ユーザー: 自分 / アクセス: 全員）をデプロイし、公開 URL を開いてください。更新時は既存デプロイを新バージョンへ更新してください。</p>');
   }
   h.push('<h3>1. アプリを入れる</h3>');
   h.push('<p><a href="' + APK_RELEASES_URL + '">SmsForwarder の配布ページ</a> を開き、一番上の Assets から <b>SmsForwarder_x.x.x_universal.apk</b> をダウンロードしてインストール（「提供元不明のアプリ」の許可が出たら許可）。</p>');
@@ -234,14 +340,14 @@ function sendSetupMail_(to, token, url) {
   h.push('<p>Sender → 「+」→ <b>Webhook</b>。次の通りに入力（長押しでコピーできます）。</p>');
   h.push('<p>名前</p>' + box('gas-sms'));
   h.push('<p>Method</p>' + box('POST'));
-  h.push('<p>Webhook server（URL）</p>' + box(deployed ? url : '（デプロイ後に setup を再実行してください）'));
+  h.push('<p>Webhook server（URL）</p>' + box(deployed ? url : '（デプロイ後に公開 URL を開いてください）'));
   h.push('<p>Web params（1 行そのまま貼る）</p>' + box(webParams));
   h.push('<p>Secret は空のまま。保存して「Test」を押すと、このメールアドレスにテストメールが届きます。</p>');
   h.push('<h3>5. 転送ルール（Rule）を作る</h3>');
   h.push('<p>Rule → SMS → 「+」。条件は「All」、Sender は gas-sms、SIM は両方。保存してトグルを ON。</p>');
   h.push('<h3>6. 確認</h3>');
   h.push('<p>別の電話から SMS を 1 通送り、<b>[SMS] 番号</b> という件名のメールが届けば完了です。届かないときはスプレッドシートの <b>log</b> シートに理由が残ります。</p>');
-  h.push('<hr><p style="font-size:13px;color:#666">転送ルールの調整は <b>filter</b> シートで（type: allow / deny、field: from / body / device / sim、pattern: 正規表現）。Gmail のラベルは既定で SIM の名前が付きます。要らなければスクリプトプロパティ <b>LABEL_MODE</b> を <b>none</b>（端末名にするなら <b>device</b>）にしてください。TOKEN を変えたいときはスクリプトプロパティを消して setup を再実行。</p>');
+  h.push('<hr><p style="font-size:13px;color:#666">転送ルールは <b>filter</b> シート、宛先・ラベル・合言葉は <b>settings</b> シートで変更できます。合言葉を作り直すときは値を消して setup を再実行してください。</p>');
   h.push('</div>');
 
   var plain = [
@@ -251,19 +357,24 @@ function sendSetupMail_(to, token, url) {
     '4. Sender → + → Webhook',
     '   名前: gas-sms',
     '   Method: POST',
-    '   URL: ' + (deployed ? url : '（デプロイ後に setup を再実行）'),
+    '   URL: ' + (deployed ? url : '（デプロイ後に公開 URL を開く）'),
     '   Web params: ' + webParams,
     '5. Rule → SMS → +（All / gas-sms / SIM 両方）→ ON',
     '6. SMS を 1 通送って届けば完了',
   ].join('\n');
 
-  GmailApp.sendEmail(to, '[SMS転送] スマホ側の設定手順（トークン入り）', plain, { htmlBody: h.join('\n') });
+  var boundary = 'sms-forwarder-' + Utilities.getUuid().replace(/-/g, '');
+  var mime = buildMultipartMime_(to, '[SMS転送] スマホ側の設定手順（トークン入り）',
+    plain, h.join('\n'), boundary, encodeBase64_);
+  Gmail.Users.Messages.send({ raw: encodeRaw_(mime) }, 'me');
 }
 
 /**
  * 送信テスト（GAS エディタから手で実行）
  */
 function testSend() {
+  labelCache_ = null;
+  var settings = loadSettings_();
   var sms = {
     receivedAt: new Date().toISOString(),
     loggedAt: new Date(),
@@ -273,7 +384,7 @@ function testSend() {
     body: 'これはテストです',
   };
   var verdict = judge_(sms, loadRules_());
-  if (verdict.pass) sendMail_(sms, PropertiesService.getScriptProperties().getProperty('MAIL_TO'));
+  if (verdict.pass) sendMail_(sms, settings);
   appendLog_(sms, verdict.pass, verdict.reason);
   Logger.log(JSON.stringify(verdict));
 }

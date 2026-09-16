@@ -11,4 +11,13 @@ function loadLib() {
   return context;
 }
 
-module.exports = { loadLib };
+function loadApp(globals) {
+  const context = vm.createContext({ JSON, Date, Error, RegExp, String, ...globals });
+  for (const name of ['lib.js', 'Code.js']) {
+    const filename = path.join(__dirname, '..', 'gas', name);
+    vm.runInContext(fs.readFileSync(filename, 'utf8'), context, { filename });
+  }
+  return context;
+}
+
+module.exports = { loadLib, loadApp };

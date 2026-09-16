@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { loadLib } = require('./helper');
+const { loadLib, loadApp } = require('./helper');
 
 test('simName_ extracts a note from a SIM slot', () => {
   const { simName_ } = loadLib();
@@ -126,4 +126,265 @@ test('testSend passes loaded rules to judge_', () => {
   const testSendBody = code.match(/function testSend\(\) \{([\s\S]*?)\n\}/);
   assert.ok(testSendBody, 'testSend function not found');
   assert.match(testSendBody[1], /judge_\(sms, loadRules_\(\)\)/);
+});
+
+const encodeBase64 = (value) => Buffer.from(value, 'utf8').toString('base64');
+
+test('buildTextMime_ builds an RFC822 text message with an encoded subject', () => {
+  const { buildTextMime_ } = loadLib();
+  const mime = buildTextMime_(
+    'me@example.com',
+    'SMS転送 テスト',
+    'first\nsecond',
+    encodeBase64,
+  );
+
+  assert.match(mime, /^To: me@example\.com\r\n/);
+  assert.match(mime, /Subject: =\?UTF-8\?B\?U01T6Lui6YCBIOODhuOCueODiA==\?=\r\n/);
+  assert.match(mime, /Content-Type: text\/plain; charset=UTF-8\r\n/);
+  assert.match(mime, /\r\n\r\nfirst\r\nsecond$/);
+  assert.doesNotMatch(mime, /SMS転送 テスト/);
+  assert.doesNotMatch(mime, /(?<!\r)\n/);
+});
+
+test('buildTextMime_ strips line breaks from address and subject headers', () => {
+  const { buildTextMime_ } = loadLib();
+  const mime = buildTextMime_(
+    'me@example.com\r\nBcc: attacker@example.com',
+    'safe\r\nBcc: attacker@example.com',
+    'body',
+    encodeBase64,
+  );
+
+  assert.doesNotMatch(mime, /\r\nBcc:/);
+});
+
+test('buildMultipartMime_ contains plain and HTML alternatives with a closed boundary', () => {
+  const { buildMultipartMime_ } = loadLib();
+  const mime = buildMultipartMime_(
+    'me@example.com',
+    '設定手順',
+    'plain text',
+    '<p>html text</p>',
+    'sms-forwarder-boundary',
+    encodeBase64,
+  );
+
+  assert.match(mime, /Content-Type: multipart\/alternative; boundary="sms-forwarder-boundary"/);
+  assert.match(mime, /--sms-forwarder-boundary\r\nContent-Type: text\/plain; charset=UTF-8/);
+  assert.match(mime, /\r\n\r\nplain text\r\n--sms-forwarder-boundary/);
+  assert.match(mime, /Content-Type: text\/html; charset=UTF-8/);
+  assert.match(mime, /\r\n\r\n<p>html text<\/p>\r\n--sms-forwarder-boundary--$/);
+});
+
+test('resolveLabelName_ supports all label modes and prefixes', () => {
+  const { resolveLabelName_ } = loadLib();
+  const sms = { sim: ' SIM1_work ', device: ' Pixel 9 ' };
+  const cases = [
+    [{ LABEL_MODE: 'sim', LABEL_PREFIX: 'SMS' }, 'SMS/work'],
+    [{ LABEL_MODE: 'sim', LABEL_PREFIX: '' }, 'work'],
+    [{ LABEL_MODE: 'device', LABEL_PREFIX: 'SMS' }, 'SMS/Pixel 9'],
+    [{ LABEL_MODE: 'device', LABEL_PREFIX: '' }, 'Pixel 9'],
+    [{ LABEL_MODE: 'fixed', LABEL_NAME: ' Bank ', LABEL_PREFIX: 'SMS' }, 'SMS/Bank'],
+    [{ LABEL_MODE: 'fixed', LABEL_NAME: ' Bank ', LABEL_PREFIX: '' }, 'Bank'],
+    [{ LABEL_MODE: 'none', LABEL_PREFIX: 'SMS' }, ''],
+    [{ LABEL_MODE: 'none', LABEL_PREFIX: '' }, ''],
+  ];
+
+  for (const [settings, expected] of cases) {
+    assert.equal(resolveLabelName_(sms, settings), expected);
+  }
+});
+
+test('resolveLabelName_ does not create a prefix-only label', () => {
+  const { resolveLabelName_ } = loadLib();
+  assert.equal(resolveLabelName_({ sim: '', device: '' }, {
+    LABEL_MODE: 'sim',
+    LABEL_PREFIX: ' SMS ',
+  }), '');
+  assert.equal(resolveLabelName_({}, {
+    LABEL_MODE: 'fixed',
+    LABEL_NAME: '   ',
+    LABEL_PREFIX: 'SMS',
+  }), '');
+});
+
+test('parseSettingsRows_ maps Japanese items and display values to internal settings', () => {
+  const { parseSettingsRows_ } = loadLib();
+  const rows = [
+    ['項目', '値', '説明'],
+    [' 合言葉 ', ' secret ', ''],
+    ['転送先アドレス', '', ''],
+    ['ラベルの付け方', ' 固定名 ', ''],
+    ['固定ラベル名', ' Bank ', ''],
+    ['親ラベル', ' SMS ', ''],
+    ['ログの保持行数', ' 1000 ', ''],
+    ['未認証も記録する', ' はい ', ''],
+  ];
+
+  assert.deepEqual(JSON.parse(JSON.stringify(parseSettingsRows_(rows))), {
+    TOKEN: 'secret',
+    MAIL_TO: '',
+    LABEL_MODE: 'fixed',
+    LABEL_NAME: 'Bank',
+    LABEL_PREFIX: 'SMS',
+    LOG_MAX_ROWS: '1000',
+    LOG_UNAUTHORIZED: 'yes',
+  });
+});
+
+test('parseSettingsRows_ ignores empty rows, unknown items, and unknown select values', () => {
+  const { parseSettingsRows_ } = loadLib();
+  const rows = [
+    ['項目', '値', '説明'],
+    ['', '', ''],
+    ['知らない項目', 'value', ''],
+    ['ラベルの付け方', '自動', ''],
+    ['未認証も記録する', 'たぶん', ''],
+    ['親ラベル', '', ''],
+  ];
+
+  assert.deepEqual(JSON.parse(JSON.stringify(parseSettingsRows_(rows))), {
+    LABEL_PREFIX: '',
+  });
+});
+
+test('parseSettingsRows_ accepts every label and boolean display choice', () => {
+  const { parseSettingsRows_ } = loadLib();
+  const labelModes = {
+    SIM名: 'sim',
+    端末名: 'device',
+    固定名: 'fixed',
+    付けない: 'none',
+  };
+  for (const [display, internal] of Object.entries(labelModes)) {
+    assert.equal(parseSettingsRows_([['項目', '値'], ['ラベルの付け方', display]]).LABEL_MODE, internal);
+  }
+  assert.equal(parseSettingsRows_([['項目', '値'], ['未認証も記録する', 'いいえ']]).LOG_UNAUTHORIZED, 'no');
+});
+
+test('manifest enables Gmail v1 with only the planned scopes', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'gas', 'appsscript.json'), 'utf8'));
+  assert.deepEqual(manifest.dependencies.enabledAdvancedServices, [
+    { userSymbol: 'Gmail', version: 'v1', serviceId: 'gmail' },
+  ]);
+  assert.deepEqual(manifest.oauthScopes, [
+    'https://www.googleapis.com/auth/gmail.modify',
+    'https://www.googleapis.com/auth/spreadsheets.currentonly',
+    'https://www.googleapis.com/auth/userinfo.email',
+  ]);
+});
+
+test('Code.js uses the Gmail advanced service without legacy search-and-sleep labeling', () => {
+  const code = fs.readFileSync(path.join(__dirname, '..', 'gas', 'Code.js'), 'utf8');
+  assert.doesNotMatch(code, /GmailApp/);
+  assert.doesNotMatch(code, /function labelLatest_/);
+  assert.doesNotMatch(code, /Utilities\.sleep/);
+  assert.match(code, /Gmail\.Users\.Messages\.send/);
+  assert.match(code, /Gmail\.Users\.Messages\.modify/);
+  assert.match(code, /@OnlyCurrentDoc/);
+});
+
+test('parseSettingsRows_ leaves an empty token out so legacy settings can supply it', () => {
+  const { parseSettingsRows_ } = loadLib();
+  assert.equal(Object.hasOwn(parseSettingsRows_([['項目', '値'], ['合言葉', ' ']]), 'TOKEN'), false);
+});
+
+test('addLabel_ recovers when another execution creates the same label first', () => {
+  let lists = 0;
+  let modified;
+  const { addLabel_ } = loadApp({
+    Gmail: { Users: {
+      Labels: {
+        list: () => ({ labels: ++lists === 1 ? [] : [{ id: 'label-1', name: 'SMS/work' }] }),
+        create: () => { throw new Error('already exists'); },
+      },
+      Messages: { modify: (request, user, messageId) => { modified = { request, user, messageId }; } },
+    } },
+  });
+  addLabel_('message-1', 'SMS/work');
+  assert.deepEqual(JSON.parse(JSON.stringify(modified)), {
+    request: { addLabelIds: ['label-1'] }, user: 'me', messageId: 'message-1',
+  });
+});
+
+test('addLabel_ does not hide a label creation failure without an existing label', () => {
+  const { addLabel_ } = loadApp({
+    Gmail: { Users: { Labels: {
+      list: () => ({ labels: [] }),
+      create: () => { throw new Error('permission denied'); },
+    } } },
+  });
+  assert.throws(() => addLabel_('message-1', 'SMS/work'), /permission denied/);
+});
+
+test('sendMail_ keeps a successful send successful even if labeling fails', () => {
+  let sends = 0;
+  let warnings = 0;
+  const { sendMail_ } = loadApp({
+    Utilities: {
+      Charset: { UTF_8: 'UTF-8' },
+      base64Encode: encodeBase64,
+      base64EncodeWebSafe: encodeBase64,
+    },
+    console: { warn: () => { warnings++; } },
+    Gmail: { Users: {
+      Messages: { send: () => { sends++; return { id: 'message-1' }; } },
+      Labels: { list: () => { throw new Error('label API unavailable'); } },
+    } },
+  });
+  assert.doesNotThrow(() => sendMail_({ from: '0000', sim: 'work', body: 'text' }, {
+    MAIL_TO: 'me@example.com', LABEL_MODE: 'sim', LABEL_PREFIX: 'SMS',
+  }));
+  assert.equal(sends, 1);
+  assert.equal(warnings, 1);
+});
+
+test('loadSettings_ avoids legacy properties when the settings sheet supplies all keys', () => {
+  const rows = [
+    ['項目', '値'], ['合言葉', 'test-value'], ['転送先アドレス', ''],
+    ['ラベルの付け方', 'SIM名'], ['固定ラベル名', ''], ['親ラベル', 'SMS'],
+    ['ログの保持行数', ''], ['未認証も記録する', 'いいえ'],
+  ];
+  const { loadSettings_ } = loadApp({
+    SpreadsheetApp: { getActiveSpreadsheet: () => ({ getSheetByName: () => ({
+      getDataRange: () => ({ getValues: () => rows }),
+    }) }) },
+    PropertiesService: { getScriptProperties: () => { throw new Error('unnecessary legacy read'); } },
+  });
+  assert.equal(loadSettings_().LABEL_MODE, 'sim');
+});
+
+test('addLabel_ reuses labels created within the same execution', () => {
+  let lists = 0;
+  let creates = 0;
+  const { addLabel_ } = loadApp({
+    Gmail: { Users: {
+      Labels: {
+        list: () => { lists++; return { labels: [] }; },
+        create: ({ name }) => { creates++; return { id: 'label-1', name }; },
+      },
+      Messages: { modify: () => {} },
+    } },
+  });
+  addLabel_('message-1', 'SMS/work');
+  addLabel_('message-2', 'SMS/work');
+  assert.equal(lists, 1);
+  assert.equal(creates, 1);
+});
+
+test('every application entry point resets execution-scoped label caches', () => {
+  const code = fs.readFileSync(path.join(__dirname, '..', 'gas', 'Code.js'), 'utf8');
+  for (const name of ['doPost', 'doGet', 'setup', 'testSend']) {
+    assert.ok(new RegExp('function ' + name + '\\([^)]*\\) \\{\\s*labelCache_ = null;').test(code), name + ' must reset the cache');
+  }
+});
+
+test('resolveSetupToken_ distinguishes first migration from explicit regeneration', () => {
+  const { resolveSetupToken_ } = loadLib();
+  const generate = () => 'new-value';
+  assert.equal(resolveSetupToken_([['項目', '値']], 'old-value', generate), 'old-value');
+  assert.equal(resolveSetupToken_([['項目', '値'], ['合言葉', '']], 'old-value', generate), 'new-value');
+  assert.equal(resolveSetupToken_([['項目', '値'], ['合言葉', 'current-value']], 'old-value', generate), 'current-value');
+  assert.equal(resolveSetupToken_([['項目', '値']], '', generate), 'new-value');
 });
