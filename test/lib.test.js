@@ -2,6 +2,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { loadLib } = require('./helper');
 
 test('simName_ extracts a note from a SIM slot', () => {
@@ -117,4 +119,11 @@ test('parseRequest_ falls back to form parameters', () => {
 test('parseRequest_ rejects an empty body', () => {
   const { parseRequest_ } = loadLib();
   assert.throws(() => parseRequest_({}), /empty body/);
+});
+
+test('testSend passes loaded rules to judge_', () => {
+  const code = fs.readFileSync(path.join(__dirname, '..', 'gas', 'Code.js'), 'utf8');
+  const testSendBody = code.match(/function testSend\(\) \{([\s\S]*?)\n\}/);
+  assert.ok(testSendBody, 'testSend function not found');
+  assert.match(testSendBody[1], /judge_\(sms, loadRules_\(\)\)/);
 });

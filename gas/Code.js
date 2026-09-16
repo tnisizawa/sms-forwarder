@@ -272,7 +272,7 @@ function testSend() {
     from: '0000',
     body: 'これはテストです',
   };
-  var verdict = judge_(sms);
+  var verdict = judge_(sms, loadRules_());
   if (verdict.pass) sendMail_(sms, PropertiesService.getScriptProperties().getProperty('MAIL_TO'));
   appendLog_(sms, verdict.pass, verdict.reason);
   Logger.log(JSON.stringify(verdict));
