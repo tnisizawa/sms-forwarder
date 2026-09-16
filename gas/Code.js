@@ -46,7 +46,7 @@ function doPost(e) {
       return json_({ ok: false, error: 'unauthorized' });
     }
 
-    var verdict = judge_(sms);
+    var verdict = judge_(sms, loadRules_());
     var mailed = false;
     if (verdict.pass) {
       sendMail_(sms, props.getProperty('MAIL_TO'));
@@ -91,71 +91,15 @@ function html_(body) {
     '<div style="font-family:sans-serif;font-size:16px;line-height:1.7;padding:16px">' + body + '</div>');
 }
 
-function parseRequest_(e) {
-  if (!e || !e.postData || !e.postData.contents) {
-    throw new Error('empty body');
-  }
-  var raw = e.postData.contents;
-  try {
-    return JSON.parse(raw);
-  } catch (_) {
-    // JSON でなければ form-urlencoded として扱う
-    return e.parameter || {};
-  }
-}
-
 /**
  * filter シートに基づく判定。
  *   列: type (allow|deny) / field (from|body|device|sim) / pattern (正規表現) / memo
  *   - deny に一致したら不合格
  *   - allow 行が 1 つも無ければ全通し、あれば allow に一致したものだけ合格
  */
-function judge_(sms) {
-  var rules = loadRules_();
-  var allows = rules.filter(function (r) { return r.type === 'allow'; });
-  var denies = rules.filter(function (r) { return r.type === 'deny'; });
-
-  for (var i = 0; i < denies.length; i++) {
-    if (matchRule_(denies[i], sms)) {
-      return { pass: false, reason: 'deny:' + denies[i].pattern };
-    }
-  }
-  if (allows.length === 0) {
-    return { pass: true, reason: 'no-allow-rules' };
-  }
-  for (var j = 0; j < allows.length; j++) {
-    if (matchRule_(allows[j], sms)) {
-      return { pass: true, reason: 'allow:' + allows[j].pattern };
-    }
-  }
-  return { pass: false, reason: 'no-allow-match' };
-}
-
-function matchRule_(rule, sms) {
-  var target = sms[rule.field];
-  if (target === undefined) return false;
-  try {
-    return new RegExp(rule.pattern, 'i').test(String(target));
-  } catch (_) {
-    return false;
-  }
-}
-
 function loadRules_() {
   var sheet = getSheet_(SHEET_FILTER, ['type', 'field', 'pattern', 'memo']);
-  var values = sheet.getDataRange().getValues();
-  var rules = [];
-  for (var i = 1; i < values.length; i++) {
-    var row = values[i];
-    var type = String(row[0] || '').trim().toLowerCase();
-    var field = String(row[1] || '').trim().toLowerCase();
-    var pattern = String(row[2] || '').trim();
-    if (!type || !field || !pattern) continue;
-    if (type !== 'allow' && type !== 'deny') continue;
-    if (['from', 'body', 'device', 'sim'].indexOf(field) < 0) continue;
-    rules.push({ type: type, field: field, pattern: pattern });
-  }
-  return rules;
+  return parseRuleRows_(sheet.getDataRange().getValues());
 }
 
 function sendMail_(sms, to) {
@@ -187,18 +131,6 @@ function labelFor_(sms) {
   if (mode === 'none') return '';
   if (mode === 'device') return sms.device || '';
   return sms.sim || '';
-}
-
-/**
- * SmsForwarder の [card_slot]（"SIM1_a" / "SIM2" など）から備考（ニックネーム）だけを取り出す。
- * 備考が無ければ "SIM1" のようにスロット名をそのまま返す。
- */
-function simName_(raw) {
-  var s = String(raw || '').trim();
-  if (!s) return '';
-  var m = s.match(/^(SIM\s*\d)\s*[_:\-\s]\s*(.+)$/i);
-  if (m) return m[2].trim();
-  return s;
 }
 
 /**

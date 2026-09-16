@@ -1,2 +1,3 @@
 .clasp-user
 *.log
+node_modules/
