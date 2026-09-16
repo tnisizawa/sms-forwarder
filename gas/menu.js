@@ -13,23 +13,22 @@ function menuSetup() {
   var ui = SpreadsheetApp.getUi();
   setup();
   // alert suspends execution, so initialization must release its lock first.
-  ui.alert('初期設定が完了しました。ウェブアプリをデプロイ後、「スマホの設定手順をメールで送る」を実行してください。');
+  ui.alert('初期設定が完了しました（バージョン ' + VERSION + '）。ウェブアプリをデプロイし、公開画面に表示されたURLをsettingsの「ウェブアプリURL」へ貼り付けてから、「スマホの設定手順をメールで送る」を実行してください。');
 }
 
 function menuSendSetupMail() {
   var ui = SpreadsheetApp.getUi();
-  var token = loadSettings_().TOKEN;
-  if (!token) {
+  var settings = loadSettings_();
+  if (!settings.TOKEN) {
     ui.alert('先に「初期設定」を実行してください。');
     return;
   }
-  var service = ScriptApp.getService();
-  var url = service.getUrl();
-  if (!service.isEnabled() || !url || !/\/exec$/.test(url)) {
-    ui.alert('ウェブアプリをデプロイしてください。開発用URLでは手順メールを送れません。');
+  var url = settings.WEB_APP_URL;
+  if (!isWebAppUrl_(url)) {
+    ui.alert('ウェブアプリをデプロイし、公開画面に表示されたURL（/execで終わる）をsettingsの「ウェブアプリURL」へ貼り付けてください。「ウェブアプリURL」の行がなければ、先に「初期設定」を実行すると行が追加されます。');
     return;
   }
-  sendSetupMail_(Session.getEffectiveUser().getEmail(), token, url);
+  sendSetupMail_(Session.getEffectiveUser().getEmail(), settings.TOKEN, url);
   PropertiesService.getScriptProperties().setProperty('SETUP_MAIL_SENT', new Date().toISOString());
   ui.alert('自分宛にスマホの設定手順を送りました。スマホでメールを開いて進めてください。');
 }

@@ -27,6 +27,7 @@ function fixture(initial = {}, old = {}) {
       getMaxColumns: () => 26,
       getDataRange: () => ({ getValues: () => plain(data.length ? data : [['']]) }),
       appendRow(row) { write(); data.push(plain(row)); },
+      insertRowBefore(row) { write(); data.splice(row - 1, 0, []); },
       setFrozenRows(n) { write(); assert.equal(n, 1); },
       setColumnWidth(col, width) { write(); calls.formats.push([name, 'width', col, width]); },
       getProtections: () => protections,
@@ -72,13 +73,15 @@ function fixture(initial = {}, old = {}) {
   return { app, sheets, calls, props, lock, get held() { return held; }, snapshot: () => plain(Object.fromEntries(Object.entries(sheets).map(([name, s]) => [name, s.data]))) };
 }
 
+const settingRow = (f, item) => f.sheets.settings.data.findIndex(row => row[0] === item);
+
 test('initSheets reproduces the three sheet schemas in an empty book', () => {
   const f = fixture(); f.app.initSheets();
   assert.deepEqual(Object.keys(f.sheets).sort(), ['filter', 'log', 'settings']);
   assert.deepEqual(f.sheets.log.data[0], ['logged_at', 'received_at', 'device', 'from', 'body', 'mailed', 'reason', 'sim']);
   assert.deepEqual(f.sheets.settings.data[0], ['項目', '値', '説明']);
   assert.deepEqual(f.sheets.filter.data[0], ['type', 'field', 'pattern', 'memo']);
-  assert.equal(f.sheets.settings.data.length, 8);
+  assert.equal(f.sheets.settings.data.length, 10);
   assert.equal(f.sheets.filter.data.length, 3);
   assert.equal(f.sheets.filter.data.slice(1).every(row => row[0] === ''), true);
   assert.equal(f.held, false);
@@ -93,8 +96,8 @@ test('initSheets is value-idempotent including examples and protections', () => 
 
 test('initSheets preserves existing values, active rules and log rows', () => {
   const f = fixture(); f.app.initSheets();
-  f.sheets.settings.data[1][1] = 'kept-token';
-  f.sheets.settings.data[2][1] = 'receiver@example.invalid';
+  f.sheets.settings.data[settingRow(f, '合言葉')][1] = 'kept-token';
+  f.sheets.settings.data[settingRow(f, '転送先アドレス')][1] = 'receiver@example.invalid';
   f.sheets.filter.data.push(['deny', 'body', 'blocked', 'custom']);
   f.sheets.log.data.push(['date', 'date', 'device', '0000', 'body', 'no', 'denied', 'sim']);
   const before = f.snapshot(); f.app.initSheets(); assert.deepEqual(f.snapshot(), before);
@@ -108,9 +111,10 @@ test('initSheets migrates legacy settings without clearing unrelated properties'
 });
 
 test('initSheets regenerates an explicitly cleared token', () => {
-  const f = fixture(); f.app.initSheets(); const token = f.sheets.settings.data[1][1];
-  f.sheets.settings.data[1][1] = ''; f.props.TOKEN = 'stale'; f.app.initSheets();
-  assert.notEqual(f.sheets.settings.data[1][1], token); assert.notEqual(f.sheets.settings.data[1][1], 'stale');
+  const f = fixture(); f.app.initSheets();
+  const row = settingRow(f, '合言葉'); const token = f.sheets.settings.data[row][1];
+  f.sheets.settings.data[row][1] = ''; f.props.TOKEN = 'stale'; f.app.initSheets();
+  assert.notEqual(f.sheets.settings.data[row][1], token); assert.notEqual(f.sheets.settings.data[row][1], 'stale');
 });
 
 test('initSheets checks all headers before writing any sheet', () => {
@@ -129,7 +133,7 @@ test('receiver sheet lookup cannot create missing sheets', () => {
 });
 
 test('setup delegates initialization without logging personal data', () => {
-  const f = fixture(); f.app.setup(); assert.equal(f.sheets.settings.data.length, 8);
+  const f = fixture(); f.app.setup(); assert.equal(f.sheets.settings.data.length, 10);
   assert.equal(f.calls.logs.some(v => /@|kept-token|generated/.test(v)), false);
 });
 
@@ -147,47 +151,91 @@ test('onOpen constructs exactly three menu items without touching settings or em
   assert.equal(f.calls.writes, 0);
 });
 
+test('initSheets shows the code version on the first settings row and adds a web app URL row', () => {
+  const f = fixture(); f.app.initSheets();
+  assert.equal(f.sheets.settings.data[1][0], 'バージョン');
+  assert.equal(f.sheets.settings.data[1][1], f.app.VERSION);
+  assert.equal(settingRow(f, 'ウェブアプリURL') > 0, true);
+  assert.equal(f.sheets.settings.data.length, 10);
+});
+
+test('initSheets inserts the version row at the top of an existing book once', () => {
+  const f = fixture({ settings: [
+    ['項目', '値', '説明'], ['合言葉', 'existing-token', ''], ['転送先アドレス', 'a@example.invalid', ''],
+    ['ラベルの付け方', '端末名', ''], ['固定ラベル名', '', ''], ['親ラベル', '', ''],
+    ['ログの保持行数', '50', ''], ['未認証も記録する', 'はい', ''],
+  ] });
+  f.app.initSheets();
+  assert.equal(f.sheets.settings.data[1][0], 'バージョン');
+  assert.equal(settingRow(f, 'ウェブアプリURL') > 0, true);
+  assert.equal(f.sheets.settings.data[settingRow(f, '合言葉')][1], 'existing-token');
+  assert.equal(f.sheets.settings.data[settingRow(f, 'ログの保持行数')][1], '50');
+  const before = f.snapshot(); f.app.initSheets();
+  assert.deepEqual(f.snapshot(), before);
+  for (const item of ['バージョン', 'ウェブアプリURL']) {
+    assert.equal(f.sheets.settings.data.filter(row => row[0] === item).length, 1);
+  }
+});
+
 test('menuSetup initializes before showing the next-step dialog outside the lock', () => {
-  const f = fixture(); f.app.menuSetup(); assert.equal(f.sheets.settings.data.length, 8);
+  const f = fixture(); f.app.menuSetup(); assert.equal(f.sheets.settings.data.length, 10);
   assert.equal(f.calls.alerts.length, 1); assert.equal(f.calls.alerts[0].includes('デプロイ'), true);
 });
 
-test('setup-mail refuses an exec-looking URL when the web app is not enabled', () => {
-  const f = fixture(); f.app.initSheets();
-  f.app.ScriptApp = { getService: () => ({ getUrl: () => 'https://example.invalid/exec', isEnabled: () => false }) };
-  let sends = 0; f.app.sendSetupMail_ = () => { sends++; }; f.app.menuSendSetupMail();
-  assert.equal(sends, 0); assert.equal(f.props.SETUP_MAIL_SENT, undefined);
-  assert.equal(f.calls.alerts[0].includes('デプロイ'), true);
-});
+const VALID_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbx1234567890/exec';
+const setWebAppUrl = (f, url) => { f.sheets.settings.data[settingRow(f, 'ウェブアプリURL')][1] = url; };
 
-for (const url of [null, 'https://example.invalid/dev']) {
-  test('setup-mail menu refuses an undeployed or development URL: ' + (url ? 'development' : 'null'), () => {
-    const f = fixture(); f.app.initSheets(); f.app.ScriptApp = { getService: () => ({ getUrl: () => url, isEnabled: () => true }) };
+for (const url of ['', 'https://example.invalid/exec', 'http://script.google.com/macros/s/x/exec',
+  'https://script.google.com/macros/s/x/dev', 'https://script.google.com/macros/s/x',
+  'https://script.google.com/macros/s/x/exec?x=1']) {
+  test('setup-mail menu refuses a missing or invalid web app URL: ' + (url || 'empty'), () => {
+    const f = fixture(); f.app.initSheets(); setWebAppUrl(f, url);
     f.app.sendSetupMail_ = () => { throw new Error('must not send'); }; f.app.menuSendSetupMail();
-    assert.equal(f.calls.alerts[0].includes('デプロイ'), true); assert.equal(f.props.SETUP_MAIL_SENT, undefined);
+    assert.equal(f.calls.alerts[0].includes('ウェブアプリURL'), true); assert.equal(f.props.SETUP_MAIL_SENT, undefined);
   });
 }
 
+test('setup-mail menu guidance covers books still missing the URL row', () => {
+  const f = fixture({ settings: [
+    ['項目', '値', '説明'], ['合言葉', 'existing-token', ''],
+  ] });
+  f.app.sendSetupMail_ = () => { throw new Error('must not send'); }; f.app.menuSendSetupMail();
+  assert.equal(f.calls.alerts[0].includes('初期設定'), true); assert.equal(f.props.SETUP_MAIL_SENT, undefined);
+});
+
+test('initSheets keeps a pasted web app URL across reruns', () => {
+  const f = fixture(); f.app.initSheets(); setWebAppUrl(f, VALID_WEB_APP_URL);
+  f.app.initSheets();
+  assert.equal(f.sheets.settings.data[settingRow(f, 'ウェブアプリURL')][1], VALID_WEB_APP_URL);
+  assert.equal(f.app.loadSettings_().WEB_APP_URL, VALID_WEB_APP_URL);
+});
+
 test('setup-mail menu refuses an uninitialized token', () => {
-  const f = fixture(); f.app.ScriptApp = { getService: () => ({ getUrl: () => 'https://example.invalid/exec' }) };
+  const f = fixture();
   f.app.sendSetupMail_ = () => { throw new Error('must not send'); }; f.app.menuSendSetupMail();
   assert.equal(f.calls.alerts[0].includes('初期設定'), true);
 });
 
-test('setup-mail menu explicitly resends to the owner and records successful send', () => {
-  const f = fixture(); f.app.initSheets(); f.sheets.settings.data[2][1] = 'receiver@example.invalid';
-  f.props.SETUP_MAIL_SENT = 'old'; f.app.ScriptApp = { getService: () => ({ getUrl: () => 'https://example.invalid/exec', isEnabled: () => true }) };
+test('setup-mail menu sends the pasted URL to the owner without touching ScriptApp', () => {
+  const f = fixture(); f.app.initSheets(); setWebAppUrl(f, VALID_WEB_APP_URL);
+  f.sheets.settings.data[settingRow(f, '転送先アドレス')][1] = 'receiver@example.invalid';
+  f.props.SETUP_MAIL_SENT = 'old';
   let sent; f.app.sendSetupMail_ = (...args) => { sent = args; }; f.app.menuSendSetupMail();
-  assert.deepEqual(sent, ['owner@example.invalid', f.sheets.settings.data[1][1], 'https://example.invalid/exec']);
+  assert.deepEqual(sent, ['owner@example.invalid', f.sheets.settings.data[settingRow(f, '合言葉')][1], VALID_WEB_APP_URL]);
   assert.notEqual(f.props.SETUP_MAIL_SENT, 'old'); assert.equal(f.calls.alerts[0].includes('送りました'), true);
   assert.equal(f.calls.alerts[0].includes('@'), false);
 });
 
 test('setup-mail menu does not change the sent flag on send failure', () => {
-  const f = fixture(); f.app.initSheets(); f.props.SETUP_MAIL_SENT = 'old';
-  f.app.ScriptApp = { getService: () => ({ getUrl: () => 'https://example.invalid/exec', isEnabled: () => true }) };
+  const f = fixture(); f.app.initSheets(); setWebAppUrl(f, VALID_WEB_APP_URL); f.props.SETUP_MAIL_SENT = 'old';
   f.app.sendSetupMail_ = () => { throw new Error('send failed'); };
   assert.throws(() => f.app.menuSendSetupMail(), /send failed/); assert.equal(f.props.SETUP_MAIL_SENT, 'old'); assert.equal(f.calls.alerts.length, 0);
+});
+
+test('menuSetup dialog shows the code version and the URL paste step', () => {
+  const f = fixture(); f.app.menuSetup();
+  assert.equal(f.calls.alerts[0].includes(f.app.VERSION), true);
+  assert.equal(f.calls.alerts[0].includes('ウェブアプリURL'), true);
 });
 
 for (const pass of [true, false]) {
@@ -212,14 +260,14 @@ test('menu handlers refuse to run without a bound spreadsheet UI', () => {
 
 test('sheet specifications document non-destructive initialization and the managed schemas', () => {
   const spec = fs.readFileSync(path.join(gasDir, '..', 'docs', 'SHEETS_SPEC.md'), 'utf8');
-  for (const phrase of ['settings', 'log', 'filter', 'type空欄の例は無効', 'ヘッダー不一致では変更前に停止', '既存値とログは上書き・削除しない']) assert.equal(spec.includes(phrase), true);
+  for (const phrase of ['settings', 'log', 'filter', 'type空欄の例は無効', 'ヘッダー不一致では変更前に停止', '既存値とログは上書き・削除しない', 'ウェブアプリURL', 'バージョン']) assert.equal(spec.includes(phrase), true);
 });
 
 test('operation and release documents distinguish menu authorization from public deployment', () => {
   const read = name => fs.readFileSync(path.join(gasDir, '..', 'docs', name), 'utf8');
   const operations = read('OPERATIONS.md'); const backlog = read('RELEASE_BACKLOG.md');
-  for (const phrase of ['初期設定', 'スマホの設定手順をメールで送る', 'テスト送信', 'script.container.ui', '端末側の合言葉も更新']) assert.equal(operations.includes(phrase), true);
-  for (const phrase of ['公開v16は未更新', '塊6', 'HEAD']) assert.equal(backlog.includes(phrase), true);
+  for (const phrase of ['初期設定', 'スマホの設定手順をメールで送る', 'テスト送信', 'script.container.ui', '端末側の合言葉も更新', 'ウェブアプリURL', '貼り付け']) assert.equal(operations.includes(phrase), true);
+  for (const phrase of ['公開v16は未更新', '塊6', 'HEAD', 'ウェブアプリURL']) assert.equal(backlog.includes(phrase), true);
 });
 
 test('doPost rejects a missing log sheet before sending without recreating it', () => {
@@ -227,7 +275,7 @@ test('doPost rejects a missing log sheet before sending without recreating it', 
   let sends = 0; f.app.sendMail_ = () => { sends++; }; f.app.json_ = value => value;
   f.app.CacheService = { getScriptCache: () => ({ get: () => null, put() {} }) };
   Object.assign(f.app.Utilities, { DigestAlgorithm: { SHA_256: 'sha256' }, Charset: { UTF_8: 'utf8' }, computeDigest: () => [], base64EncodeWebSafe: () => 'isolated-key' });
-  const result = f.app.doPost({ postData: { contents: JSON.stringify({ token: f.sheets.settings.data[1][1], from: '0000', body: 'test', received_at: 'fixture-date' }) } });
+  const result = f.app.doPost({ postData: { contents: JSON.stringify({ token: f.sheets.settings.data[settingRow(f, '合言葉')][1], from: '0000', body: 'test', received_at: 'fixture-date' }) } });
   assert.equal(result.ok, false); assert.equal(sends, 0); assert.equal(f.sheets.log, undefined); assert.equal(f.held, false);
 });
 
