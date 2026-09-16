@@ -400,7 +400,7 @@ function receiverFixture(settings = {}) {
     releaseLock() { held = false; },
   };
   const app = loadApp({ console: { error() {}, warn() {} },
-    SpreadsheetApp: { flush() {} },
+    SpreadsheetApp: { flush() {}, getActiveSpreadsheet: () => ({ getSheetByName: () => ({}) }) },
     LockService: { getScriptLock: () => lock },
     CacheService: { getScriptCache: () => ({
       get: key => cache.get(key) || null,

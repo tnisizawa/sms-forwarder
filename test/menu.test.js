@@ -213,3 +213,18 @@ test('operation and release documents distinguish menu authorization from public
   for (const phrase of ['初期設定', 'スマホの設定手順をメールで送る', 'テスト送信', 'script.container.ui', '端末側の合言葉も更新']) assert.equal(operations.includes(phrase), true);
   for (const phrase of ['公開v16は未更新', '塊6', 'HEAD']) assert.equal(backlog.includes(phrase), true);
 });
+
+test('doPost rejects a missing log sheet before sending without recreating it', () => {
+  const f = fixture(); f.app.initSheets(); delete f.sheets.log;
+  let sends = 0; f.app.sendMail_ = () => { sends++; }; f.app.json_ = value => value;
+  f.app.CacheService = { getScriptCache: () => ({ get: () => null, put() {} }) };
+  Object.assign(f.app.Utilities, { DigestAlgorithm: { SHA_256: 'sha256' }, Charset: { UTF_8: 'utf8' }, computeDigest: () => [], base64EncodeWebSafe: () => 'isolated-key' });
+  const result = f.app.doPost({ postData: { contents: JSON.stringify({ token: f.sheets.settings.data[1][1], from: '0000', body: 'test', received_at: 'fixture-date' }) } });
+  assert.equal(result.ok, false); assert.equal(sends, 0); assert.equal(f.sheets.log, undefined); assert.equal(f.held, false);
+});
+
+test('testSend checks the log destination before sending', () => {
+  const f = fixture(); f.app.initSheets(); delete f.sheets.log;
+  let sends = 0; f.app.sendMail_ = () => { sends++; };
+  assert.throws(() => f.app.testSend(), /初期設定/); assert.equal(sends, 0); assert.equal(f.sheets.log, undefined);
+});

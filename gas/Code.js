@@ -57,6 +57,8 @@ function doPost(e) {
     lock.waitLock(30000);
     lockHeld = true;
 
+    // Missing configuration is detected before send; post-send logging failures still degrade safely.
+    getSheet_(SHEET_LOG);
     var verdict = judge_(sms, loadRules_());
     if (verdict.pass) {
       var cache = CacheService.getScriptCache();
@@ -327,11 +329,8 @@ function json_(obj) {
 var APK_RELEASES_URL = 'https://github.com/pppscn/SmsForwarder/releases';
 
 /**
- * 初期セットアップ（GAS エディタから 1 回だけ手で実行する）
- *   - log / filter シートを作る
- *   - TOKEN が未設定ならランダム生成
- *   - 権限承認ダイアログを出す
- *   - スマホ用の手順メールは、デプロイ後に公開 URL を開いたとき doGet が送る
+ * 初期設定の互換入口。不足シート・設定を非破壊で補完し、再実行できる。
+ * 手順メールはデプロイ後にメニューから送る（従来のdoGetによる送信も維持）。
  */
 function setup() {
   labelCache_ = null;
@@ -406,6 +405,7 @@ function sendSetupMail_(to, token, url) {
 function testSend() {
   labelCache_ = null;
   var settings = loadSettings_();
+  getSheet_(SHEET_LOG);
   var sms = {
     receivedAt: new Date().toISOString(),
     loggedAt: new Date(),
