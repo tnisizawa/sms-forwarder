@@ -1,3 +1,6 @@
+/** コードの版。GitHub の Releases / CHANGELOG.md と突き合わせる */
+var VERSION = '1.0.0';
+
 /**
  * SmsForwarder の [card_slot]（"SIM1_a" / "SIM2" など）から備考（ニックネーム）だけを取り出す。
  * 備考が無ければ "SIM1" のようにスロット名をそのまま返す。
@@ -132,7 +135,8 @@ var SETTING_KEYS_ = {
   '固定ラベル名': 'LABEL_NAME',
   '親ラベル': 'LABEL_PREFIX',
   'ログの保持行数': 'LOG_MAX_ROWS',
-  '未認証も記録する': 'LOG_UNAUTHORIZED'
+  '未認証も記録する': 'LOG_UNAUTHORIZED',
+  'ウェブアプリURL': 'WEB_APP_URL'
 };
 
 var SETTING_DISPLAY_VALUES_ = {
@@ -189,4 +193,12 @@ function resolveSetupToken_(rows, legacyToken, generateToken) {
     }
   }
   return legacyToken || generateToken();
+}
+
+/**
+ * 利用者が貼り付けた公開ウェブアプリ URL の形式だけを確認する。
+ * 公開状態・到達可能性・このスクリプトとの対応は保証しない（疎通確認もしない）。
+ */
+function isWebAppUrl_(url) {
+  return /^https:\/\/script\.google\.com\/macros\/s\/[^/?#\s]+\/exec$/.test(String(url || '').trim());
 }

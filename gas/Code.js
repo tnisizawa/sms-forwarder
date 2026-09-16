@@ -236,20 +236,22 @@ var SETTINGS_ROWS_ = [
   ['固定ラベル名', '', '「固定名」のときに使います'],
   ['親ラベル', 'SMS', 'この下にまとめます。空なら親ラベルを付けません'],
   ['ログの保持行数', 1000, 'ヘッダーを除く保持件数。超過分は古い行から自動削除。空欄・不正値は1000行'],
-  ['未認証も記録する', 'いいえ', '切り分け時だけ「はい」にします']
+  ['未認証も記録する', 'いいえ', '切り分け時だけ「はい」にします'],
+  ['ウェブアプリURL', '', 'ウェブアプリをデプロイ後、公開画面のURL（/execで終わる）を貼り付けます']
 ];
 
 function loadSettings_() {
   var defaults = {
     TOKEN: '', MAIL_TO: '', LABEL_MODE: 'sim', LABEL_NAME: '', LABEL_PREFIX: 'SMS',
-    LOG_MAX_ROWS: 1000, LOG_UNAUTHORIZED: 'no'
+    LOG_MAX_ROWS: 1000, LOG_UNAUTHORIZED: 'no', WEB_APP_URL: ''
   };
   var props = null;
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_SETTINGS);
   var sheetValues = sheet ? parseSettingsRows_(sheet.getDataRange().getValues()) : {};
   Object.keys(defaults).forEach(function (key) {
     if (Object.prototype.hasOwnProperty.call(sheetValues, key)) defaults[key] = sheetValues[key];
-    else {
+    else if (key !== 'WEB_APP_URL') {
+      // ウェブアプリURLはシートの明示入力だけを使う（旧プロパティや自動取得へ倒さない）
       if (!props) props = PropertiesService.getScriptProperties().getProperties();
       if (Object.prototype.hasOwnProperty.call(props, key)) defaults[key] = props[key];
     }
@@ -257,8 +259,27 @@ function loadSettings_() {
   return defaults;
 }
 
+/** 先頭のデータ行にコードの版を出す。利用者の値ではないため毎回 VERSION で更新する */
+function ensureVersionRow_(sheet) {
+  var row = 0;
+  var lastRow = sheet.getLastRow();
+  if (lastRow > 1) {
+    var items = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (var i = 0; i < items.length; i++) {
+      if (String(items[i][0]).trim() === 'バージョン') { row = i + 2; break; }
+    }
+  }
+  if (!row) {
+    sheet.insertRowBefore(2);
+    row = 2;
+    sheet.getRange(row, 1, 1, 3).setValues([['バージョン', '', 'コードの版です。コード更新で変わります']]);
+  }
+  sheet.getRange(row, 2).setValue(VERSION);
+}
+
 function ensureSettingsSheet_() {
   var sheet = getSheet_(SHEET_SETTINGS);
+  ensureVersionRow_(sheet);
   var props = PropertiesService.getScriptProperties();
   var old = props.getProperties();
   var existing = {};
@@ -335,7 +356,7 @@ var APK_RELEASES_URL = 'https://github.com/pppscn/SmsForwarder/releases';
 function setup() {
   labelCache_ = null;
   initSheets();
-  Logger.log('準備完了。ウェブアプリをデプロイ後、SMS転送メニューからスマホの設定手順を送れます。');
+  Logger.log('準備完了（バージョン ' + VERSION + '）。ウェブアプリをデプロイし、表示されたURLをsettingsの「ウェブアプリURL」へ貼り付けてから、SMS転送メニューで手順メールを送れます。');
 }
 
 /**

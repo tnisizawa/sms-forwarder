@@ -381,6 +381,44 @@ test('every application entry point resets execution-scoped label caches', () =>
   }
 });
 
+test('VERSION identifies the code revision for release matching', () => {
+  const { VERSION } = loadLib();
+  assert.match(VERSION, /^\d+\.\d+\.\d+$/);
+});
+
+test('parseSettingsRows_ maps the web app URL item to WEB_APP_URL', () => {
+  const { parseSettingsRows_ } = loadLib();
+  const url = 'https://script.google.com/macros/s/abc123/exec';
+  assert.equal(parseSettingsRows_([['項目', '値'], ['ウェブアプリURL', ' ' + url + ' ']]).WEB_APP_URL, url);
+  assert.equal(Object.hasOwn(parseSettingsRows_([['項目', '値'], ['ウェブアプリURL', '']]), 'WEB_APP_URL'), true);
+});
+
+test('isWebAppUrl_ accepts only the published web app URL form', () => {
+  const { isWebAppUrl_ } = loadLib();
+  assert.equal(isWebAppUrl_('https://script.google.com/macros/s/AKfyc_x/exec'), true);
+  assert.equal(isWebAppUrl_('  https://script.google.com/macros/s/x/exec  '), true);
+  for (const url of ['', null, 'https://script.google.com/macros/s/x/dev',
+    'http://script.google.com/macros/s/x/exec', 'https://evil.example/macros/s/x/exec',
+    'https://script.google.com/macros/s/x', 'https://script.google.com/macros/s/x/exec?a=1',
+    'https://script.google.com/macros/s/x/exec/extra', 'https://script.google.com/macros/s//exec']) {
+    assert.equal(isWebAppUrl_(url), false, String(url));
+  }
+});
+
+test('loadSettings_ reads WEB_APP_URL only from the sheet, never from legacy properties', () => {
+  const loadAppWith = rows => loadApp({
+    SpreadsheetApp: { getActiveSpreadsheet: () => ({ getSheetByName: () => ({
+      getDataRange: () => ({ getValues: () => rows }),
+    }) }) },
+    PropertiesService: { getScriptProperties: () => ({
+      getProperties: () => ({ WEB_APP_URL: 'https://script.google.com/macros/s/legacy/exec' }),
+    }) },
+  });
+  const url = 'https://script.google.com/macros/s/sheet/exec';
+  assert.equal(loadAppWith([['項目', '値'], ['ウェブアプリURL', url]]).loadSettings_().WEB_APP_URL, url);
+  assert.equal(loadAppWith([['項目', '値']]).loadSettings_().WEB_APP_URL, '');
+});
+
 test('resolveSetupToken_ distinguishes first migration from explicit regeneration', () => {
   const { resolveSetupToken_ } = loadLib();
   const generate = () => 'new-value';
