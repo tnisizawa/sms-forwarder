@@ -23,8 +23,9 @@ function menuSendSetupMail() {
     ui.alert('先に「初期設定」を実行してください。');
     return;
   }
-  var url = ScriptApp.getService().getUrl();
-  if (!url || !/\/exec$/.test(url)) {
+  var service = ScriptApp.getService();
+  var url = service.getUrl();
+  if (!service.isEnabled() || !url || !/\/exec$/.test(url)) {
     ui.alert('ウェブアプリをデプロイしてください。開発用URLでは手順メールを送れません。');
     return;
   }

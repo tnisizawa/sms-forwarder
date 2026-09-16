@@ -152,9 +152,17 @@ test('menuSetup initializes before showing the next-step dialog outside the lock
   assert.equal(f.calls.alerts.length, 1); assert.equal(f.calls.alerts[0].includes('デプロイ'), true);
 });
 
+test('setup-mail refuses an exec-looking URL when the web app is not enabled', () => {
+  const f = fixture(); f.app.initSheets();
+  f.app.ScriptApp = { getService: () => ({ getUrl: () => 'https://example.invalid/exec', isEnabled: () => false }) };
+  let sends = 0; f.app.sendSetupMail_ = () => { sends++; }; f.app.menuSendSetupMail();
+  assert.equal(sends, 0); assert.equal(f.props.SETUP_MAIL_SENT, undefined);
+  assert.equal(f.calls.alerts[0].includes('デプロイ'), true);
+});
+
 for (const url of [null, 'https://example.invalid/dev']) {
   test('setup-mail menu refuses an undeployed or development URL: ' + (url ? 'development' : 'null'), () => {
-    const f = fixture(); f.app.initSheets(); f.app.ScriptApp = { getService: () => ({ getUrl: () => url }) };
+    const f = fixture(); f.app.initSheets(); f.app.ScriptApp = { getService: () => ({ getUrl: () => url, isEnabled: () => true }) };
     f.app.sendSetupMail_ = () => { throw new Error('must not send'); }; f.app.menuSendSetupMail();
     assert.equal(f.calls.alerts[0].includes('デプロイ'), true); assert.equal(f.props.SETUP_MAIL_SENT, undefined);
   });
@@ -168,7 +176,7 @@ test('setup-mail menu refuses an uninitialized token', () => {
 
 test('setup-mail menu explicitly resends to the owner and records successful send', () => {
   const f = fixture(); f.app.initSheets(); f.sheets.settings.data[2][1] = 'receiver@example.invalid';
-  f.props.SETUP_MAIL_SENT = 'old'; f.app.ScriptApp = { getService: () => ({ getUrl: () => 'https://example.invalid/exec' }) };
+  f.props.SETUP_MAIL_SENT = 'old'; f.app.ScriptApp = { getService: () => ({ getUrl: () => 'https://example.invalid/exec', isEnabled: () => true }) };
   let sent; f.app.sendSetupMail_ = (...args) => { sent = args; }; f.app.menuSendSetupMail();
   assert.deepEqual(sent, ['owner@example.invalid', f.sheets.settings.data[1][1], 'https://example.invalid/exec']);
   assert.notEqual(f.props.SETUP_MAIL_SENT, 'old'); assert.equal(f.calls.alerts[0].includes('送りました'), true);
@@ -177,7 +185,7 @@ test('setup-mail menu explicitly resends to the owner and records successful sen
 
 test('setup-mail menu does not change the sent flag on send failure', () => {
   const f = fixture(); f.app.initSheets(); f.props.SETUP_MAIL_SENT = 'old';
-  f.app.ScriptApp = { getService: () => ({ getUrl: () => 'https://example.invalid/exec' }) };
+  f.app.ScriptApp = { getService: () => ({ getUrl: () => 'https://example.invalid/exec', isEnabled: () => true }) };
   f.app.sendSetupMail_ = () => { throw new Error('send failed'); };
   assert.throws(() => f.app.menuSendSetupMail(), /send failed/); assert.equal(f.props.SETUP_MAIL_SENT, 'old'); assert.equal(f.calls.alerts.length, 0);
 });
