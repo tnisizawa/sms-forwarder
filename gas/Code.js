@@ -130,7 +130,7 @@ function html_(body) {
  *   - allow 行が 1 つも無ければ全通し、あれば allow に一致したものだけ合格
  */
 function loadRules_() {
-  var sheet = getSheet_(SHEET_FILTER, ['type', 'field', 'pattern', 'memo']);
+  var sheet = getSheet_(SHEET_FILTER);
   return parseRuleRows_(sheet.getDataRange().getValues());
 }
 
@@ -205,7 +205,7 @@ function appendLog_(sms, mailed, reason, settings, lockHeld) {
     lock.waitLock(30000);
   }
   try {
-    var sheet = getSheet_(SHEET_LOG, LOG_HEADERS);
+    var sheet = getSheet_(SHEET_LOG);
     // 先頭の ' で電話番号を文字列として保存（0000 が 0 に化けるのを防ぐ）
     sheet.appendRow([
       sms.loggedAt, sms.receivedAt, sms.device, "'" + sms.from, sms.body,
@@ -222,7 +222,7 @@ function appendLog_(sms, mailed, reason, settings, lockHeld) {
   }
 }
 
-function getSheet_(name, headers) {
+function getSheet_(name) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(name);
   if (!sheet) throw new Error('必要なシートがありません。SMS転送メニューの初期設定を実行してください。');
@@ -258,7 +258,7 @@ function loadSettings_() {
 }
 
 function ensureSettingsSheet_() {
-  var sheet = getSheet_(SHEET_SETTINGS, ['項目', '値', '説明']);
+  var sheet = getSheet_(SHEET_SETTINGS);
   var props = PropertiesService.getScriptProperties();
   var old = props.getProperties();
   var existing = {};
