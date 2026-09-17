@@ -136,8 +136,8 @@ function loadRules_() {
 
 function sendMail_(sms, settings) {
   var recipient = settings.MAIL_TO || Session.getEffectiveUser().getEmail();
-  // 件名を固定してスレッドを共有する（送信元は本文とラベルで見分ける）
-  var subject = '[SMS転送]';
+  // 件名は送信元だけ。同じ番号からのメールが Gmail で 1 スレッドにまとまる
+  var subject = '[SMS] ' + sms.from;
   var lines = [
     '送信元: ' + sms.from,
     '端末  : ' + sms.device,
@@ -147,8 +147,9 @@ function sendMail_(sms, settings) {
     sms.body,
   ];
   var props = PropertiesService.getScriptProperties();
-  var threadId = props.getProperty('MAIL_THREAD_ID');
-  var anchorId = props.getProperty('MAIL_MSG_ID');
+  var anchorFrom = String(sms.from).replace(/[^A-Za-z0-9]/g, '_');
+  var threadId = props.getProperty('MAIL_THREAD_' + anchorFrom);
+  var anchorId = props.getProperty('MAIL_MSG_' + anchorFrom);
   var mime = buildTextMime_(recipient, subject, lines.join('\n'), encodeBase64_,
     anchorId ? { inReplyTo: anchorId, references: anchorId } : null);
   var request = { raw: encodeRaw_(mime) };
@@ -161,7 +162,7 @@ function sendMail_(sms, settings) {
     delete request.threadId;
     sent = Gmail.Users.Messages.send(request, 'me');
   }
-  updateMailAnchor_(sent, props);
+  updateMailAnchor_(sent, props, anchorFrom);
   var labelName = resolveLabelName_(sms, settings);
   if (labelName) {
     try {
@@ -173,17 +174,17 @@ function sendMail_(sms, settings) {
   }
 }
 
-// 送信したメールの threadId と Message-Id を保存し、次の送信を同じスレッドへつなげる。
-function updateMailAnchor_(sent, props) {
+// 送信したメールの threadId と Message-Id を送信元ごとに保存し、同じ番号からの次の送信を同じスレッドへつなげる。
+function updateMailAnchor_(sent, props, anchorFrom) {
   try {
-    if (sent.threadId) props.setProperty('MAIL_THREAD_ID', sent.threadId);
+    if (sent.threadId) props.setProperty('MAIL_THREAD_' + anchorFrom, sent.threadId);
     var meta = Gmail.Users.Messages.get('me', sent.id, {
       format: 'metadata', metadataHeaders: ['Message-Id'],
     });
     var headers = (meta.payload && meta.payload.headers) || [];
     for (var i = 0; i < headers.length; i++) {
       if (String(headers[i].name).toLowerCase() === 'message-id') {
-        props.setProperty('MAIL_MSG_ID', headers[i].value);
+        props.setProperty('MAIL_MSG_' + anchorFrom, headers[i].value);
         break;
       }
     }
@@ -454,7 +455,7 @@ function sendSetupMail_(to, token, url) {
   h.push('<h3>5. 転送ルール（Rule）を作る</h3>');
   h.push('<p>Rule → SMS → 「+」。条件は「All」、Sender は gas-sms、SIM は両方。保存してトグルを ON。</p>');
   h.push('<h3>6. 確認</h3>');
-  h.push('<p>別の電話から SMS を 1 通送り、<b>[SMS転送]</b> という件名のメールが届けば完了です。届かないときはスプレッドシートの <b>log</b> シートに理由が残ります。</p>');
+  h.push('<p>別の電話から SMS を 1 通送り、<b>[SMS] 番号</b> という件名のメールが届けば完了です。届かないときはスプレッドシートの <b>log</b> シートに理由が残ります。</p>');
   h.push('<hr><p style="font-size:13px;color:#666">転送ルールは <b>filter</b> シート、宛先・ラベル・合言葉は <b>settings</b> シートで変更できます。合言葉を作り直すときは値を消して setup を再実行してください。</p>');
   h.push('</div>');
 

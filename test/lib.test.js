@@ -651,7 +651,7 @@ test('buildTextMime_ adds threading headers when refs are given', () => {
   assert.match(mime, /^References: <m1@mail\.gmail\.com>\r$/m);
 });
 
-test('sendMail_ uses one fixed subject so all forwards share a thread', () => {
+test('sendMail_ keeps the sender number in the subject', () => {
   const raws = [];
   const { sendMail_ } = loadApp({
     Utilities: {
@@ -673,10 +673,10 @@ test('sendMail_ uses one fixed subject so all forwards share a thread', () => {
   });
   const mime = Buffer.from(raws[0], 'base64url').toString('utf8');
   const subject = mime.match(/^Subject: =\?UTF-8\?B\?(.+?)\?=/m)[1];
-  assert.equal(Buffer.from(subject, 'base64').toString('utf8'), '[SMS転送]');
+  assert.equal(Buffer.from(subject, 'base64').toString('utf8'), '[SMS] 090-1111');
 });
 
-test('sendMail_ stores a thread anchor and chains the next mail into it', () => {
+test('sendMail_ chains mails from the same sender into one thread', () => {
   const sends = [];
   const props = {};
   const { sendMail_ } = loadApp({
@@ -698,20 +698,50 @@ test('sendMail_ stores a thread anchor and chains the next mail into it', () => 
     } },
   });
   const settings = { MAIL_TO: 'me@example.com', LABEL_MODE: 'sim', LABEL_PREFIX: 'SMS' };
-  sendMail_({ from: '0000', sim: 'a', body: 'one' }, settings);
-  sendMail_({ from: '1111', sim: 'b', body: 'two' }, settings);
+  sendMail_({ from: '090-1', sim: 'a', body: 'one' }, settings);
+  sendMail_({ from: '090-1', sim: 'a', body: 'two' }, settings);
 
-  assert.equal(props.MAIL_THREAD_ID, 't-1');
-  assert.equal(props.MAIL_MSG_ID, '<m2@mail.gmail.com>');
+  assert.equal(props['MAIL_THREAD_090_1'], 't-1');
+  assert.equal(props['MAIL_MSG_090_1'], '<m2@mail.gmail.com>');
   assert.equal(sends[1].threadId, 't-1');
   const mime = Buffer.from(sends[1].raw, 'base64url').toString('utf8');
   assert.match(mime, /^In-Reply-To: <m1@mail\.gmail\.com>/m);
   assert.match(mime, /^References: <m1@mail\.gmail\.com>/m);
 });
 
+test('sendMail_ does not chain mails from different senders into the same thread', () => {
+  const sends = [];
+  const props = {};
+  const { sendMail_ } = loadApp({
+    Utilities: {
+      Charset: { UTF_8: 'UTF-8' },
+      base64Encode: encodeBase64,
+      base64EncodeWebSafe: (v) => Buffer.from(v, 'utf8').toString('base64url'),
+    },
+    PropertiesService: { getScriptProperties: () => ({
+      getProperty: (k) => props[k] ?? null,
+      setProperty: (k, v) => { props[k] = v; },
+    }) },
+    Gmail: { Users: {
+      Messages: {
+        send: (req) => { sends.push(req); return { id: 'm' + sends.length, threadId: 't-' + sends.length }; },
+        get: (user, id) => ({ payload: { headers: [{ name: 'Message-Id', value: '<' + id + '@mail.gmail.com>' }] } }),
+      },
+      Labels: { list: () => ({ labels: [] }), create: () => ({ id: 'l' }) },
+    } },
+  });
+  const settings = { MAIL_TO: 'me@example.com', LABEL_MODE: 'sim', LABEL_PREFIX: 'SMS' };
+  sendMail_({ from: '090-1', sim: 'a', body: 'one' }, settings);
+  sendMail_({ from: '080-2', sim: 'b', body: 'two' }, settings);
+
+  assert.equal(sends[1].threadId, undefined);
+  assert.equal(props['MAIL_THREAD_080_2'], 't-2');
+  assert.equal(props['MAIL_MSG_080_2'], '<m2@mail.gmail.com>');
+});
+
 test('sendMail_ falls back to a fresh thread when the stored threadId is stale', () => {
   const sends = [];
-  const props = { MAIL_THREAD_ID: 't-old', MAIL_MSG_ID: '<old@x>' };
+  const props = { MAIL_THREAD_090_1: 't-old', MAIL_MSG_090_1: '<old@x>' };
   const { sendMail_ } = loadApp({
     Utilities: {
       Charset: { UTF_8: 'UTF-8' },
@@ -734,10 +764,10 @@ test('sendMail_ falls back to a fresh thread when the stored threadId is stale',
       Labels: { list: () => ({ labels: [] }), create: () => ({ id: 'l' }) },
     } },
   });
-  sendMail_({ from: '0000', sim: 'a', body: 'x' }, {
+  sendMail_({ from: '090-1', sim: 'a', body: 'x' }, {
     MAIL_TO: 'me@example.com', LABEL_MODE: 'sim', LABEL_PREFIX: 'SMS',
   });
   assert.equal(sends.length, 2);
   assert.equal(sends[1].threadId, undefined);
-  assert.equal(props.MAIL_THREAD_ID, 't-new');
+  assert.equal(props.MAIL_THREAD_090_1, 't-new');
 });
