@@ -438,38 +438,48 @@ function sendSetupMail_(to, token, url) {
   }
   h.push('<h3>1. アプリを入れる</h3>');
   h.push('<p><a href="' + APK_RELEASES_URL + '">SmsForwarder の配布ページ</a> を開き、一番上の Assets から <b>SmsForwarder_x.x.x_universal.apk</b> をダウンロードしてインストール（「提供元不明のアプリ」の許可が出たら許可）。</p>');
-  h.push('<h3>2. 権限を許可する</h3>');
-  h.push('<ul><li>SMS / 電話 / 通知の表示 → 許可</li>' +
-    '<li>「通知へのアクセス」は不要（スキップしてよい）</li>' +
-    '<li>Android 13 以降で「制限付き設定」と出たら: 設定 → アプリ → SmsForwarder → 右上「⋮」→「制限付き設定を許可」→ もう一度権限を許可</li>' +
-    '<li>アプリ内の設定で「電池の最適化を無視」と「自動起動」を ON</li></ul>');
-  h.push('<h3>3. 端末名と SIM の名前を付ける</h3>');
-  h.push('<p>General settings → <b>Device mark</b> に端末を区別する名前（例: A）。SIM が複数あるなら <b>SIM1 / SIM2 の備考</b> に短い名前（例: a, b）。SIM の名前がそのまま Gmail のラベルになります。</p>');
-  h.push('<h3>4. 送信先（Sender）を作る</h3>');
-  h.push('<p>Sender → 「+」→ <b>Webhook</b>。次の通りに入力（長押しでコピーできます）。</p>');
+  h.push('<h3>2. 英語に切り替える（初回起動は中国語で出ます）</h3>');
+  h.push('<ol>' +
+    '<li>起動すると中国語の確認画面が出ます。「<b>同意</b>」（同意する）を押す</li>' +
+    '<li>ヒントのカルーセルが出たら「下一条」（次へ）を最後まで進めるか「✗」で閉じる</li>' +
+    '<li>画面下のバーの右端「<b>通用设置</b>」（SETTINGS）を開く</li>' +
+    '<li>下までスクロールして「<b>多语言设置</b>」→「<b>English</b>」を選ぶ</li></ol>' +
+    '<p>以降このメールの画面名は英語表記で書きます。</p>');
+  h.push('<h3>3. 権限と端末名</h3>');
+  h.push('<ol>' +
+    '<li>「SETTINGS」タブの「<b>Forward Sms</b>」を ON にし、求められた権限を許可（SMS・電話。電話が無いと SIM 名が取れずラベルが付きません）' +
+    '<ul><li>「通知へのアクセス」は他アプリの通知転送用なので SMS だけなら不要</li>' +
+    '<li>Android 13 以降で「制限付き設定」と出たら: 設定 → アプリ → SmsForwarder → 右上「⋮」→「制限付き設定を許可」</li></ul></li>' +
+    '<li>同じ画面を下へスクロールし、「<b>Device Name</b>」に端末名（例: phone1）、「<b>SIM1 SubId/Label</b>」に SIM の名前（例: main）を入れる。この名前が Gmail のラベル名になります</li>' +
+    '<li>電池の最適化の除外と自動起動を許可（端末の設定側。止まるときの原因として多い）</li></ol>');
+  h.push('<h3>4. 送り先（Sender）を作る</h3>');
+  h.push('<p>「SENDERS」タブ → 右上「+」→「<b>Webhook</b>」を選び、次の通りに入力します（長押しでコピーできます）。</p>');
   h.push('<p>名前</p>' + box('gas-sms'));
   h.push('<p>Method</p>' + box('POST'));
   h.push('<p>Webhook server（URL）</p>' + box(deployed ? url : '（デプロイ後に公開 URL を開いてください）'));
   h.push('<p>Web params（1 行そのまま貼る）</p>' + box(webParams));
-  h.push('<p>Secret は空のまま。保存して「Test」を押すと、このメールアドレスにテストメールが届きます。</p>');
+  h.push('<p>Secret は空のまま。「<b>Test</b>」を押すと実 SMS を待たずに GAS への疎通を確認できます（スプレッドシートの log シートに1行増えます）。できたら「<b>Save</b>」。</p>');
   h.push('<h3>5. 転送ルール（Rule）を作る</h3>');
-  h.push('<p>Rule → SMS → 「+」。条件は「All」、Sender は gas-sms、SIM は両方。保存してトグルを ON。</p>');
+  h.push('<p>「RULES」タブ → 右上「+」。「Select Sender」にさっき作った Sender、「Field」は「All」、「SIM Slot」は「<b>Any SIM</b>」のまま（両 SIM が対象。片方だけに変えるともう一方の SMS が転送されません）、「Enable This Forwarding Rule」を ON にして「Save」。</p>');
   h.push('<h3>6. 確認</h3>');
   h.push('<p>別の電話から SMS を 1 通送り、<b>[SMS] 番号</b> という件名のメールが届けば完了です。届かないときはスプレッドシートの <b>log</b> シートに理由が残ります。</p>');
   h.push('<hr><p style="font-size:13px;color:#666">転送ルールは <b>filter</b> シート、宛先・ラベル・合言葉は <b>settings</b> シートで変更できます。合言葉を作り直すときは値を消して setup を再実行してください。</p>');
   h.push('</div>');
 
   var plain = [
-    '1. ' + APK_RELEASES_URL + ' から APK を入れる',
-    '2. 権限: SMS / 電話 / 通知の表示 を許可。電池最適化の無視と自動起動を ON',
-    '3. General settings: Device mark と SIM の備考に名前',
-    '4. Sender → + → Webhook',
+    '1. ' + APK_RELEASES_URL + ' から universal.apk を入れる',
+    '2. 英語に切り替える（初回は中国語）: 同意 → 下のバー右端「通用设置」→ 下までスクロール「多语言设置」→ English',
+    '3. SETTINGS タブ: Forward Sms を ON → 権限を許可（SMS・電話。通知アクセスは不要）',
+    '   同画面の下部: Device Name に端末名、SIM1 SubId/Label に SIM 名（ラベル名になる）',
+    '   電池最適化の除外・自動起動も許可',
+    '4. SENDERS → + → Webhook',
     '   名前: gas-sms',
     '   Method: POST',
-    '   URL: ' + (deployed ? url : '（デプロイ後に公開 URL を開く）'),
+    '   Webhook server: ' + (deployed ? url : '（デプロイ後に公開 URL を開く）'),
     '   Web params: ' + webParams,
-    '5. Rule → SMS → +（All / gas-sms / SIM 両方）→ ON',
-    '6. SMS を 1 通送って届けば完了',
+    '   Secret は空。Test で疎通確認 → Save',
+    '5. RULES → + → Select Sender=gas-sms / Field=All / SIM Slot=Any SIM / Enable ON → Save',
+    '6. SMS を 1 通送って届けば完了（件名 [SMS] 番号。同じ番号は1スレッドにまとまる）',
   ].join('\n');
 
   var boundary = 'sms-forwarder-' + Utilities.getUuid().replace(/-/g, '');
