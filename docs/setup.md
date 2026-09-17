@@ -122,6 +122,10 @@ SmsForwarder の APK を GitHub Releases からインストールします（「
 「**Offline**」で「**Export**」（保存先は `Download/SmsForwarder.json`）。
 新しい端末では同じ画面の「**Import**」で読み込みます（両端末のアプリ版を揃えてください）。
 
+ファイルの受け渡しは `SmsForwarder.json` を Google ドライブ・メール添付・USB などで新端末の
+`Download` フォルダへ置くだけです。同じ Wi-Fi 上なら「Network」タブの端末間直送
+（旧端末 Push → 新端末 Pull）も使えます。
+
 ![設定のエクスポート/インポート](images/app-onekey-clone.png)
 
 送り先（Sender）とルールは複製されますが、**個人設定（Device Name・Forward Sms のスイッチ等）は引き継がれません**。
