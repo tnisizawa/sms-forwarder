@@ -297,7 +297,10 @@ test('addLabel_ recovers when another execution creates the same label first', (
   const { addLabel_ } = loadApp({
     Gmail: { Users: {
       Labels: {
-        list: () => ({ labels: ++lists === 1 ? [] : [{ id: 'label-1', name: 'SMS/work' }] }),
+        list: () => ({ labels: ++lists === 1 ? [] : [
+          { id: 'label-0', name: 'SMS' },
+          { id: 'label-1', name: 'SMS/work' },
+        ] }),
         create: () => { throw new Error('already exists'); },
       },
       Messages: { modify: (request, user, messageId) => { modified = { request, user, messageId }; } },
@@ -378,7 +381,7 @@ test('addLabel_ reuses labels created within the same execution', () => {
   addLabel_('message-1', 'SMS/work');
   addLabel_('message-2', 'SMS/work');
   assert.equal(lists, 1);
-  assert.equal(creates, 1);
+  assert.equal(creates, 2);
 });
 
 test('every application entry point resets execution-scoped label caches', () => {
@@ -770,4 +773,35 @@ test('sendMail_ falls back to a fresh thread when the stored threadId is stale',
   assert.equal(sends.length, 2);
   assert.equal(sends[1].threadId, undefined);
   assert.equal(props.MAIL_THREAD_090_1, 't-new');
+});
+
+test('addLabel_ creates the parent label before a nested label', () => {
+  const created = [];
+  const { addLabel_ } = loadApp({
+    Gmail: { Users: {
+      Labels: {
+        list: () => ({ labels: [] }),
+        create: ({ name }) => { created.push(name); return { id: 'l-' + name, name }; },
+      },
+      Messages: { modify: () => {} },
+    } },
+  });
+  addLabel_('message-1', 'SMS/work');
+  assert.deepEqual(created, ['SMS', 'SMS/work']);
+});
+
+test('addLabel_ reuses an existing parent label for nested labels', () => {
+  const created = [];
+  const { addLabel_ } = loadApp({
+    Gmail: { Users: {
+      Labels: {
+        list: () => ({ labels: [{ id: 'l-parent', name: 'SMS' }] }),
+        create: ({ name }) => { created.push(name); return { id: 'l-' + name, name }; },
+      },
+      Messages: { modify: () => {} },
+    } },
+  });
+  addLabel_('message-1', 'SMS/work');
+  addLabel_('message-2', 'SMS/home');
+  assert.deepEqual(created, ['SMS/work', 'SMS/home']);
 });

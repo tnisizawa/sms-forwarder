@@ -205,8 +205,16 @@ function encodeRaw_(mime) {
 var labelCache_ = null;
 
 function addLabel_(messageId, labelName) {
+  var resolvedLabel = ensureLabel_(labelName);
+  Gmail.Users.Messages.modify({ addLabelIds: [resolvedLabel.id] }, 'me', messageId);
+}
+
+// 入れ子ラベル（SMS/main 等）は親が存在しないと Gmail でネスト表示されないため、親から順に作る。
+function ensureLabel_(labelName) {
   var resolvedLabel = findLabel_(labelName);
   if (!resolvedLabel) {
+    var slash = labelName.lastIndexOf('/');
+    if (slash > 0) ensureLabel_(labelName.slice(0, slash));
     try {
       resolvedLabel = Gmail.Users.Labels.create({
         name: labelName,
@@ -220,8 +228,7 @@ function addLabel_(messageId, labelName) {
       if (!resolvedLabel) throw err;
     }
   }
-  var labelId = resolvedLabel.id;
-  Gmail.Users.Messages.modify({ addLabelIds: [labelId] }, 'me', messageId);
+  return resolvedLabel;
 }
 
 function findLabel_(labelName, refresh) {
