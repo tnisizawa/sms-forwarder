@@ -33,7 +33,10 @@ test('the self-authored GAS package has an MIT license', () => {
 });
 
 test('README distinguishes the separately distributed Android app from this package', () => {
-  assert.equal(read('README.md').includes('SmsForwarderアプリは同梱しません'), true);
+  const readme = read('README.md');
+  assert.equal(/## ライセンス/.test(readme), true);
+  assert.equal(/SmsForwarder\s*アプリは同梱しません/.test(readme), true);
+  assert.equal(readme.includes('MIT'), true);
 });
 
 test('docs retain the clasp identity example and the existing-deployment update path', () => {

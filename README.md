@@ -1,33 +1,79 @@
 # sms-forwarder
 
-複数の Android 端末に届く SMS を、ひとつの Gmail アドレスに集約する。
-
-端末1台だけでフィルターも要らないなら、SmsForwarder 単体のメール送信（SMTP）で足ります。
-このプロジェクトが向くのは:
-
-- 複数台の端末・複数 SIM をまとめて管理したい
-- 送信元ごとの Gmail ラベルや、転送ルールのフィルターが欲しい
-- 受信した SMS をスプレッドシートへ全件ログしたい
-- スマホに Gmail のパスワード（アプリパスワード）を置きたくない
+Android 端末に届いた SMS を Gmail に転送する Google Apps Script（GAS）です。
+端末側には SMS 転送アプリ [SmsForwarder](https://github.com/pppscn/SmsForwarder) を使い、
+受信した SMS を GAS の Web アプリへ送ってもらいます。GAS が受け取ったあとの整理と配送を担当します。
+自分の Google アカウントにスプレッドシートをコピーするだけで動き、サーバーや有料サービスは要りません。
 
 ```
 Android (SmsForwarder) --POST--> GAS Web アプリ --> Gmail 送信
                                      └-> スプレッドシート log / filter
 ```
 
-このリポジトリの自作GASコードはMITライセンスです。SmsForwarderアプリは同梱しません。
-アプリは別プロジェクトの配布ページから入手し、そちらのライセンスに従ってください。
+## できること
 
-## 3ステップで始める
+- **複数台・複数 SIM をひとつの Gmail に集約**: 端末が何台あっても宛先は 1 つ。どの端末・どの SIM に届いたかはメールに残る
+- **送信元番号ごとにスレッド化**: 同じ番号からの SMS は 1 つのスレッドにまとまり、履歴を追いやすい
+- **Gmail ラベルを自動付与**: SIM 名・端末名・固定名から選んで、`SMS/xxx` のようにネストして整理できる
+- **フィルターで取捨選択**: 送信元・本文・端末・SIM を正規表現で allow / deny できる
+- **全件ログ**: 受信した SMS と、通した・捨てたの判定理由をスプレッドシートに記録する
+- **スマホ側の設定は最小限**: 端末に入れるのは Web アプリの URL と合言葉だけ。Gmail のパスワードはスマホに置かない
 
-1. [コピーリンク](https://docs.google.com/spreadsheets/d/1mE3G0dL7AGsBANXDy_07s1P8NrMJBeGb8vWYHwr2PFY/copy)を開き「**コピーを作成**」で自分のドライブへコピー
-2. コピーしたスプレッドシートの「SMS転送」メニューから「**初期設定**」を実行し、権限を承認
-3. ウェブアプリをデプロイして表示された URL を `settings` シートの「ウェブアプリURL*」へ貼り、
-   「**スマホの設定手順をメールで送る**」を実行。届いたメールをスマホで開いて進める
+## SmsForwarder のメール送信だけで足りる？
 
-詳しい手順: **[docs/setup.md](docs/setup.md)**
+SmsForwarder 自体にもメール送信機能（SMTP）があります。端末が 1 台で、届いた SMS をそのまま Gmail に流すだけなら、それで十分です。
 
-## フィルター（`filter` シート）
+ただし SMTP 転送は Gmail のアプリパスワードをスマホに保存する必要があり、端末が増えるとその設定を台数ぶん繰り返します。
+ラベル付けや取捨選択も Gmail 側の振り分け設定に頼ることになります。
+このプロジェクトは、そうした「集約・整理・記録」を GAS 側にまとめて、端末側の設定を最小限にするためのものです。
+
+## インストール
+
+### 用意するもの
+
+- Google アカウント（Gmail を受け取るアカウント。スプレッドシートと GAS もここに置きます）
+- SMS を受ける Android 端末（1台以上）
+- 端末に入れる [SmsForwarder](https://github.com/pppscn/SmsForwarder) の APK（GitHub Releases から入手）
+
+インストール作業は「Google 側」と「スマホ側」の2つに分かれます。
+Google 側を先に済ませると、スマホ側の入力値がすべて入った手順メールが自分宛に届くので、
+スマホではそのメールを見ながら進めるだけになります。
+
+### Google 側（PC で 10 分ほど）
+
+1. **スプレッドシートをコピーする**
+   [コピーリンク](https://docs.google.com/spreadsheets/d/1mE3G0dL7AGsBANXDy_07s1P8NrMJBeGb8vWYHwr2PFY/copy)を開き「コピーを作成」を押すと、GAS コードごと自分のドライブに入ります
+2. **初期設定を実行する**
+   コピーしたスプレッドシートの「SMS転送」メニューから「初期設定」を実行し、Google の権限を承認します。
+   `settings` / `log` / `filter` の3シートと合言葉が自動で作られます
+3. **ウェブアプリを公開する**
+   「拡張機能」→「Apps Script」から「新しいデプロイ」でウェブアプリとして公開し、表示された URL をコピーします
+4. **URL を settings シートに貼る**
+   「ウェブアプリURL*」の欄にさきほどの URL を貼ります
+5. **スマホ用の手順メールを送る**
+   「SMS転送」メニューの「スマホの設定手順をメールで送る」を実行すると、URL と合言葉の入ったメールが自分宛に届きます
+
+### スマホ側（端末 1 台あたり 10 分ほど）
+
+6. **SmsForwarder を設定する**
+   届いたメールをスマホで開き、APK のインストール、権限の許可、端末名と SIM 名の入力、
+   送り先（Webhook）とルールの登録を順に進めます。初回起動は中国語なので、英語への切り替え手順もメールと文書に載せています
+7. **動作確認**
+   「SMS転送」メニューの「テスト送信」で、実際の SMS を待たずに転送先へ 1 通届くことを確かめられます。
+   仕上げに別の電話から SMS を 1 通送り、`[SMS] <番号>` という件名のメールが届けば完了です
+
+画面つきの詳しい手順は **[docs/setup.md](docs/setup.md)** にあります。
+2台目以降は SmsForwarder の設定を複製できるので、同じ文書の「複数台に増やすとき」を見てください。
+届かないときは [docs/troubleshooting.md](docs/troubleshooting.md) へ。
+
+## 設定の調整
+
+初期設定のままでも動きます。届く SMS を選びたいときは `filter` シート、ラベルや転送先を変えたいときは `settings` シートを編集します。
+どちらも保存すれば次の受信から反映され、再デプロイは要りません。
+
+### フィルター（`filter` シート）
+
+1 行が 1 つのルールです。例:
 
 | type | field | pattern | memo |
 |---|---|---|---|
@@ -39,7 +85,7 @@ Android (SmsForwarder) --POST--> GAS Web アプリ --> Gmail 送信
 - allow 行が 1 つも無ければ全部通す。あれば allow に一致したものだけ通す
 - 判定結果は `log` シートの `reason` 列に残る
 
-## settings シート
+### settings シート
 
 | 項目 | 内容 |
 |---|---|
@@ -52,24 +98,25 @@ Android (SmsForwarder) --POST--> GAS Web アプリ --> Gmail 送信
 | 未認証も記録する | いいえ（切り分け時だけ「はい」） |
 | ウェブアプリURL* | デプロイ完了画面の公開 URL（必須） |
 
-`*` は必須項目です。詳しい仕様は [docs/SHEETS_SPEC.md](docs/SHEETS_SPEC.md)。
+`*` は必須項目で、初期設定で自動的に埋まるか、インストール手順の中で貼り付けます。
+「バージョン」行もありますが、これはコードが管理するので触りません。詳しい仕様は [docs/SHEETS_SPEC.md](docs/SHEETS_SPEC.md)。
 
 ## ドキュメント
 
-- [初回セットアップ](docs/setup.md)
-- [更新手順](docs/updating.md)
-- [トラブルシューティング](docs/troubleshooting.md)
-- [開発者向け](docs/development.md)
+使う人向け:
+
+- [初回セットアップ](docs/setup.md): 画面つきの通し手順
+- [更新手順](docs/updating.md): 新しい版のコードを自分のコピーへ取り込む
+- [トラブルシューティング](docs/troubleshooting.md): 届かない・ラベルが付かないとき
+
+仕様・開発:
+
+- [シート仕様](docs/SHEETS_SPEC.md) / [運用仕様](docs/OPERATIONS.md): settings・log・filter の各列と動作の正本
+- [開発者向け](docs/development.md): clasp でのデプロイとテスト
 - [CHANGELOG](CHANGELOG.md)
-- 運用・シート仕様の正本: [docs/OPERATIONS.md](docs/OPERATIONS.md) / [docs/SHEETS_SPEC.md](docs/SHEETS_SPEC.md)
+- [旧手順: MacroDroid](docs/legacy/macrodroid.md): 有料化前に使っていた端末側アプリの設定。参考として残しています
 
-## 関連プロジェクト
+## ライセンス
 
-端末側アプリの候補:
-
-- [SmsForwarder](https://github.com/pppscn/SmsForwarder) — 標準の端末側。Webhook で GAS へ POST できる
-- [android_income_sms_gateway_webhook](https://github.com/bogkonstantin/android_income_sms_gateway_webhook) — 別の選択肢
-
-シート記録止まりの GAS サンプル（フィルター・メール転送なし）:
-
-- [android-sms-gateway/example-webhooks-google-sheets](https://github.com/android-sms-gateway/example-webhooks-google-sheets)
+このリポジトリの自作 GAS コードは MIT ライセンスです。SmsForwarder アプリは同梱しません。
+アプリは別プロジェクトの配布ページから入手し、そちらのライセンスに従ってください。

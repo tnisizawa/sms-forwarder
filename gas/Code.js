@@ -3,7 +3,7 @@
 /**
  * SMS Forwarder 受け口（GAS Web アプリ）
  *
- * Android 端末（MacroDroid）から POST された SMS を
+ * Android 端末（SmsForwarder）から POST された SMS を
  *   1. スプレッドシート「log」に記録
  *   2. フィルター（「filter」シート）を通過したら Gmail で自分宛に送信
  * する。

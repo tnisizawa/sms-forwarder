@@ -4,3 +4,4 @@
 .clasp-dist.json
 *.log
 node_modules/
+plans/

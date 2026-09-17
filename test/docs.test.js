@@ -80,12 +80,13 @@ test('troubleshooting.md covers the send quota and the unauthenticated resend pa
   for (const phrase of ['クォータ', 'resend']) assert.equal(doc.includes(phrase), true, 'troubleshooting.md missing: ' + phrase);
 });
 
-test('README states the purpose, honest fit, three steps and links every recipient doc', () => {
+test('README has the install entry point and links every recipient doc', () => {
   const readme = read('README.md');
-  assert.equal(readme.includes('ひとつの Gmail アドレスに集約'), true);
-  assert.equal(readme.includes('1台だけ'), true);
-  assert.equal(readme.includes('コピーを作成'), true);
-  for (const doc of ['docs/setup.md', 'docs/updating.md', 'docs/troubleshooting.md', 'docs/development.md', 'CHANGELOG.md']) {
+  assert.equal(/## (できること|What it does)/.test(readme), true);
+  assert.equal(/## インストール/.test(readme), true);
+  assert.equal(/\/copy\)/.test(readme), true); // the copy link is the entry point
+  assert.equal(readme.includes('テスト送信'), true);
+  for (const doc of ['docs/setup.md', 'docs/updating.md', 'docs/troubleshooting.md', 'docs/development.md', 'docs/legacy/macrodroid.md', 'CHANGELOG.md']) {
     assert.equal(readme.includes('](' + doc + ')'), true, 'README missing link: ' + doc);
   }
   assert.equal(/AKfycb|script\.google\.com\/macros\/s\/[^<\s)]+\/exec/.test(readme), false);

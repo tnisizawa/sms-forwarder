@@ -285,11 +285,10 @@ test('sheet specifications document non-destructive initialization and the manag
   for (const phrase of ['settings', 'log', 'filter', 'type空欄の例は無効', 'ヘッダー不一致では変更前に停止', '既存値とログは上書き・削除しない', 'ウェブアプリURL', 'バージョン']) assert.equal(spec.includes(phrase), true);
 });
 
-test('operation and release documents distinguish menu authorization from public deployment', () => {
-  const read = name => fs.readFileSync(path.join(gasDir, '..', 'docs', name), 'utf8');
-  const operations = read('OPERATIONS.md'); const backlog = read('RELEASE_BACKLOG.md');
+test('operations document describes the three menu items and their authorization', () => {
+  const operations = fs.readFileSync(path.join(gasDir, '..', 'docs', 'OPERATIONS.md'), 'utf8');
   for (const phrase of ['初期設定', 'スマホの設定手順をメールで送る', 'テスト送信', 'script.container.ui', '端末側の合言葉も更新', 'ウェブアプリURL', '貼り付け']) assert.equal(operations.includes(phrase), true);
-  for (const phrase of ['公開v16は未更新', '塊6', 'HEAD', 'ウェブアプリURL']) assert.equal(backlog.includes(phrase), true);
+  assert.equal(fs.existsSync(path.join(gasDir, '..', 'docs', 'RELEASE_BACKLOG.md')), false);
 });
 
 test('doPost rejects a missing log sheet before sending without recreating it', () => {
