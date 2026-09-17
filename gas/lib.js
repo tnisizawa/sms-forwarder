@@ -128,6 +128,14 @@ function resolveLabelName_(sms, settings) {
   return prefix ? prefix + '/' + name : name;
 }
 
+/**
+ * 必須項目は表示名の末尾に * が付く。キーへの対応や既存行との照合は、
+ * * を除いた素名で行う（星なし旧表記の行もそのまま読める）。
+ */
+function normalizeSettingName_(name) {
+  return String(name || '').trim().replace(/[*＊]+$/, '').trim();
+}
+
 var SETTING_KEYS_ = {
   '合言葉': 'TOKEN',
   '転送先アドレス': 'MAIL_TO',
@@ -155,7 +163,7 @@ var SETTING_DISPLAY_VALUES_ = {
 function parseSettingsRows_(rows) {
   var settings = {};
   for (var i = 1; i < rows.length; i++) {
-    var item = String(rows[i][0] || '').trim();
+    var item = normalizeSettingName_(rows[i][0]);
     var key = SETTING_KEYS_[item];
     if (!key) continue;
 
@@ -188,7 +196,7 @@ function duplicateFingerprint_(sms) {
 
 function resolveSetupToken_(rows, legacyToken, generateToken) {
   for (var i = 1; i < rows.length; i++) {
-    if (String(rows[i][0] || '').trim() === '合言葉') {
+    if (normalizeSettingName_(rows[i][0]) === '合言葉') {
       return String(rows[i][1] || '').trim() || generateToken();
     }
   }

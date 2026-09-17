@@ -386,6 +386,25 @@ test('VERSION identifies the code revision for release matching', () => {
   assert.match(VERSION, /^\d+\.\d+\.\d+$/);
 });
 
+test('parseSettingsRows_ accepts the starred required-item labels', () => {
+  const { parseSettingsRows_ } = loadLib();
+  const rows = [
+    ['項目（* は必須）', '値', '説明'],
+    ['合言葉*', ' secret ', ''],
+    ['ウェブアプリURL*', 'https://script.google.com/macros/s/x/exec', ''],
+    ['転送先アドレス', '', ''],
+  ];
+  const settings = parseSettingsRows_(rows);
+  assert.equal(settings.TOKEN, 'secret');
+  assert.equal(settings.WEB_APP_URL, 'https://script.google.com/macros/s/x/exec');
+});
+
+test('resolveSetupToken_ keeps the token on a starred 合言葉 row', () => {
+  const { resolveSetupToken_ } = loadLib();
+  const generate = () => { throw new Error('must not generate'); };
+  assert.equal(resolveSetupToken_([['項目（* は必須）', '値'], ['合言葉*', 'existing-token']], null, generate), 'existing-token');
+});
+
 test('parseSettingsRows_ maps the web app URL item to WEB_APP_URL', () => {
   const { parseSettingsRows_ } = loadLib();
   const url = 'https://script.google.com/macros/s/abc123/exec';

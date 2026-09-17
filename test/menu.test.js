@@ -73,13 +73,13 @@ function fixture(initial = {}, old = {}) {
   return { app, sheets, calls, props, lock, get held() { return held; }, snapshot: () => plain(Object.fromEntries(Object.entries(sheets).map(([name, s]) => [name, s.data]))) };
 }
 
-const settingRow = (f, item) => f.sheets.settings.data.findIndex(row => row[0] === item);
+const settingRow = (f, item) => f.sheets.settings.data.findIndex(row => f.app.normalizeSettingName_(row[0]) === item);
 
 test('initSheets reproduces the three sheet schemas in an empty book', () => {
   const f = fixture(); f.app.initSheets();
   assert.deepEqual(Object.keys(f.sheets).sort(), ['filter', 'log', 'settings']);
   assert.deepEqual(f.sheets.log.data[0], ['logged_at', 'received_at', 'device', 'from', 'body', 'mailed', 'reason', 'sim']);
-  assert.deepEqual(f.sheets.settings.data[0], ['項目', '値', '説明']);
+  assert.deepEqual(f.sheets.settings.data[0], ['項目（* は必須）', '値', '説明']);
   assert.deepEqual(f.sheets.filter.data[0], ['type', 'field', 'pattern', 'memo']);
   assert.equal(f.sheets.settings.data.length, 10);
   assert.equal(f.sheets.filter.data.length, 3);
@@ -173,8 +173,30 @@ test('initSheets inserts the version row at the top of an existing book once', (
   const before = f.snapshot(); f.app.initSheets();
   assert.deepEqual(f.snapshot(), before);
   for (const item of ['バージョン', 'ウェブアプリURL']) {
-    assert.equal(f.sheets.settings.data.filter(row => row[0] === item).length, 1);
+    assert.equal(f.sheets.settings.data.filter(row => f.app.normalizeSettingName_(row[0]) === item).length, 1);
   }
+});
+
+test('initSheets marks required items with a star and writes the legend in the header', () => {
+  const f = fixture(); f.app.initSheets();
+  assert.equal(f.sheets.settings.data[0][0], '項目（* は必須）');
+  const names = f.sheets.settings.data.slice(1).map(row => row[0]);
+  assert.equal(names.includes('合言葉*'), true);
+  assert.equal(names.includes('ウェブアプリURL*'), true);
+  assert.equal(names.some(name => /\*$/.test(name) && !['合言葉*', 'ウェブアプリURL*'].includes(name)), false);
+});
+
+test('initSheets renames legacy un-starred required labels without touching values', () => {
+  const f = fixture({ settings: [
+    ['項目', '値', '説明'], ['合言葉', 'existing-token', ''], ['転送先アドレス', 'a@example.invalid', ''],
+  ] });
+  f.app.initSheets();
+  assert.equal(f.sheets.settings.data[0][0], '項目（* は必須）');
+  assert.equal(f.sheets.settings.data[settingRow(f, '合言葉')][0], '合言葉*');
+  assert.equal(f.sheets.settings.data[settingRow(f, '合言葉')][1], 'existing-token');
+  assert.equal(f.sheets.settings.data.filter(row => f.app.normalizeSettingName_(row[0]) === '合言葉').length, 1);
+  assert.equal(f.sheets.settings.data.filter(row => f.app.normalizeSettingName_(row[0]) === 'ウェブアプリURL').length, 1);
+  assert.equal(f.app.loadSettings_().TOKEN, 'existing-token');
 });
 
 test('menuSetup initializes before showing the next-step dialog outside the lock', () => {

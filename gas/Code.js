@@ -229,15 +229,18 @@ function getSheet_(name) {
   return sheet;
 }
 
+// 4列目の true は必須項目。必須は表示名の末尾に * を付け、ヘッダーで凡例を示す
+var SETTINGS_HEADER_ = ['項目（* は必須）', '値', '説明'];
+var SETTINGS_HEADER_LEGACY_ = ['項目', '値', '説明'];
 var SETTINGS_ROWS_ = [
-  ['合言葉', '', 'スマホと共有する合言葉。消して setup を実行すると作り直されます'],
+  ['合言葉', '', 'スマホと共有する合言葉。消して setup を実行すると作り直されます', true],
   ['転送先アドレス', '', '空なら自分宛に送ります'],
   ['ラベルの付け方', 'SIM名', 'SIM名 / 端末名 / 固定名 / 付けない'],
   ['固定ラベル名', '', '「固定名」のときに使います'],
   ['親ラベル', 'SMS', 'この下にまとめます。空なら親ラベルを付けません'],
   ['ログの保持行数', 1000, 'ヘッダーを除く保持件数。超過分は古い行から自動削除。空欄・不正値は1000行'],
   ['未認証も記録する', 'いいえ', '切り分け時だけ「はい」にします'],
-  ['ウェブアプリURL', '', 'ウェブアプリをデプロイ後、公開画面のURL（/execで終わる）を貼り付けます']
+  ['ウェブアプリURL', '', 'ウェブアプリをデプロイ後、公開画面のURL（/execで終わる）を貼り付けます', true]
 ];
 
 function loadSettings_() {
@@ -279,12 +282,28 @@ function ensureVersionRow_(sheet) {
 
 function ensureSettingsSheet_() {
   var sheet = getSheet_(SHEET_SETTINGS);
+  // 凡例なしの旧ヘッダーは新表記へ移行する
+  if (String(sheet.getRange(1, 1).getValue()).trim() === SETTINGS_HEADER_LEGACY_[0]) {
+    sheet.getRange(1, 1).setValue(SETTINGS_HEADER_[0]);
+  }
   ensureVersionRow_(sheet);
   var props = PropertiesService.getScriptProperties();
   var old = props.getProperties();
   var existing = {};
   var values = sheet.getDataRange().getValues();
-  for (var i = 1; i < values.length; i++) existing[String(values[i][0] || '').trim()] = i + 1;
+  for (var i = 1; i < values.length; i++) {
+    var label = String(values[i][0] || '').trim();
+    if (label) existing[normalizeSettingName_(label)] = { row: i + 1, label: label };
+  }
+
+  // 星なし旧表記の行はすべて新表記へ揃える（値・説明は触らない）
+  var displays = {};
+  SETTINGS_ROWS_.forEach(function (d) { displays[d[0]] = d[0] + (d[3] ? '*' : ''); });
+  for (var j = 1; j < values.length; j++) {
+    var want = displays[normalizeSettingName_(values[j][0])];
+    var raw = String(values[j][0] || '').trim();
+    if (want && raw !== want) sheet.getRange(j + 1, 1).setValue(want);
+  }
 
   var token = resolveSetupToken_(values, old.TOKEN, function () {
     return Utilities.getUuid().replace(/-/g, '');
@@ -298,10 +317,14 @@ function ensureSettingsSheet_() {
   };
   SETTINGS_ROWS_.forEach(function (definition) {
     var item = definition[0];
-    if (!existing[item]) {
-      sheet.appendRow([item, Object.prototype.hasOwnProperty.call(initial, item) ? initial[item] : definition[1], definition[2]]);
-    } else if (item === '合言葉' && !sheet.getRange(existing[item], 2).getValue()) {
-      sheet.getRange(existing[item], 2).setValue(token);
+    var display = item + (definition[3] ? '*' : '');
+    var hit = existing[item];
+    if (!hit) {
+      sheet.appendRow([display, Object.prototype.hasOwnProperty.call(initial, item) ? initial[item] : definition[1], definition[2]]);
+      return;
+    }
+    if (item === '合言葉' && !sheet.getRange(hit.row, 2).getValue()) {
+      sheet.getRange(hit.row, 2).setValue(token);
     }
   });
   sheet.setFrozenRows(1);
@@ -319,7 +342,7 @@ function ensureSettingsSheet_() {
 function applySettingsRules_(sheet) {
   var values = sheet.getRange(2, 1, Math.max(sheet.getLastRow() - 1, 1), 1).getValues();
   for (var i = 0; i < values.length; i++) {
-    var item = values[i][0];
+    var item = normalizeSettingName_(values[i][0]);
     if (item === 'ラベルの付け方') {
       sheet.getRange(i + 2, 2).setDataValidation(SpreadsheetApp.newDataValidation()
         .requireValueInList(['SIM名', '端末名', '固定名', '付けない'], true).setAllowInvalid(false).build());

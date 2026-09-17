@@ -43,7 +43,7 @@ function menuTestSend() {
 /** Definitions are evaluated at call time so GAS file ordering is irrelevant. */
 function sheetSchema_() {
   return [
-    { name: SHEET_SETTINGS, headers: ['項目', '値', '説明'], widths: [180, 300, 500] },
+    { name: SHEET_SETTINGS, headers: SETTINGS_HEADER_, legacyHeaders: [SETTINGS_HEADER_LEGACY_], widths: [180, 300, 500] },
     { name: SHEET_LOG, headers: LOG_HEADERS, widths: [170, 170, 120, 150, 420, 80, 180, 120] },
     { name: SHEET_FILTER, headers: ['type', 'field', 'pattern', 'memo'], widths: [100, 120, 300, 350] },
   ];
@@ -61,7 +61,11 @@ function initSheets() {
       var sheet = ss.getSheetByName(definition.name);
       if (!sheet || !sheet.getLastRow()) return;
       var header = sheet.getRange(1, 1, 1, definition.headers.length).getValues()[0];
-      if (definition.headers.some(function (value, i) { return header[i] !== value; })) {
+      var accepted = [definition.headers].concat(definition.legacyHeaders || []);
+      var ok = accepted.some(function (expected) {
+        return expected.every(function (value, i) { return header[i] === value; });
+      });
+      if (!ok) {
         throw new Error('ヘッダーが一致しません。シートの構成を確認してください。');
       }
     });
