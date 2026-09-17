@@ -36,10 +36,10 @@ test('README distinguishes the separately distributed Android app from this pack
   assert.equal(read('README.md').includes('SmsForwarderアプリは同梱しません'), true);
 });
 
-test('README retains the update procedure for an existing deployment', () => {
-  const readme = read('README.md');
-  assert.equal(readme.includes('.clasp.json.example'), true);
-  assert.equal(readme.includes('settings'), true);
-  assert.equal(readme.includes('clasp deploy -i <deploymentId>'), true);
-  assert.equal(readme.includes('既存デプロイを更新'), true);
+test('docs retain the clasp identity example and the existing-deployment update path', () => {
+  const development = read('docs/development.md');
+  assert.equal(development.includes('.clasp.json.example'), true);
+  assert.equal(development.includes('clasp deploy -i <deploymentId>'), true);
+  assert.equal(read('docs/updating.md').includes('既存デプロイの更新'), true);
+  assert.equal(read('README.md').includes('settings'), true);
 });

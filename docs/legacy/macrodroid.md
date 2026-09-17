@@ -1,5 +1,7 @@
 # MacroDroid 設定手順（端末側）
 
+> ※ MacroDroid は有料化したため参考扱いです。標準は SmsForwarder です（[../setup.md](../setup.md) 参照）。
+
 無料版で足りる（マクロ 1 個）。
 
 ## 0. 事前準備
@@ -49,11 +51,7 @@
 1. 別の電話から SMS を 1 通送る
 2. Gmail に `[SMS] <番号> @<端末名>` が届く
 3. スプレッドシートの `log` シートに 1 行増える
-4. 届かないとき
-   - MacroDroid の「マクロログ」で HTTP リクエストの応答を見る
-     - `{"ok":false,"error":"unauthorized"}` → TOKEN の打ち間違い
-     - 応答が空 / HTML → URL が `/exec` でない、またはデプロイの「アクセス: 全員」になっていない
-   - `log` シートに行があって `mailed` が `no` → GAS 側フィルターで落ちている（`reason` 列を見る）
+4. 届かないときは [../troubleshooting.md](../troubleshooting.md) を見る（MacroDroid の「マクロログ」で HTTP 応答を確認するところは同じ）
 
 ## 3. 複数台に増やすとき
 

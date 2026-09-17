@@ -1,43 +1,31 @@
 # sms-forwarder
 
-Android 端末に届いた SMS を GAS 経由で Gmail に転送する。
+複数の Android 端末に届く SMS を、ひとつの Gmail アドレスに集約する。
 
-このリポジトリの自作GASコードはMITライセンスです。SmsForwarderアプリは同梱しません。アプリは別プロジェクトの配布ページから入手し、そちらのライセンスに従ってください。
+端末1台だけでフィルターも要らないなら、SmsForwarder 単体のメール送信（SMTP）で足ります。
+このプロジェクトが向くのは:
+
+- 複数台の端末・複数 SIM をまとめて管理したい
+- 送信元ごとの Gmail ラベルや、転送ルールのフィルターが欲しい
+- 受信した SMS をスプレッドシートへ全件ログしたい
+- スマホに Gmail のパスワード（アプリパスワード）を置きたくない
 
 ```
-Android (MacroDroid) --POST--> GAS Web アプリ --> Gmail 送信
-                                   └-> スプレッドシート log / filter
+Android (SmsForwarder) --POST--> GAS Web アプリ --> Gmail 送信
+                                     └-> スプレッドシート log / filter
 ```
 
-- GAS: `gas/`（clasp で push。`.clasp.json` 参照）
-- スプレッドシート: GAS にバインド済み（`.clasp.json` の `parentId`）
-  - `log` シート: 受信した SMS を全件記録（転送した/しなかった の理由付き）
-  - `filter` シート: 転送ルール（後述）
-- 端末側の設定: `docs/smsforwarder.md`（無料・標準）/ `docs/macrodroid.md`（有料になったので参考）
+このリポジトリの自作GASコードはMITライセンスです。SmsForwarderアプリは同梱しません。
+アプリは別プロジェクトの配布ページから入手し、そちらのライセンスに従ってください。
 
-## claspの接続設定
+## 3ステップで始める
 
-開発者は `.clasp.json.example` を `.clasp.json` にコピーし、自分のバインドスクリプトIDとスプレッドシートIDを設定します。接続設定はローカルだけに保持し、Gitへ追加しません。
+1. 配布されたコピーリンクを開き「**コピーを作成**」で自分のドライブへコピー
+2. コピーしたスプレッドシートの「SMS転送」メニューから「**初期設定**」を実行し、権限を承認
+3. ウェブアプリをデプロイして表示された URL を `settings` シートの「ウェブアプリURL*」へ貼り、
+   「**スマホの設定手順をメールで送る**」を実行。届いたメールをスマホで開いて進める
 
-公開URLとデプロイIDは各自のGASデプロイ画面で確認します。このリポジトリには記載しません。過去のGit履歴には旧接続IDが残るため、ファイルからの除去だけでは旧URLは無効になりません。
-
-## 初回セットアップ（GAS 側）
-
-1. `clasp open-script` で GAS エディタを開く
-2. 関数 `setup` を実行 → 権限を承認（log / filter シート作成、TOKEN 生成）
-3. 「デプロイ」→「新しいデプロイ」→ 種類「ウェブアプリ」（実行ユーザー: 自分 / アクセス: 全員）
-4. 表示された公開URL（末尾が `/exec`） をブラウザで開く
-   → 自分宛に「[SMS転送] スマホ側の設定手順（トークン入り）」メールが届く（URL・TOKEN・貼り付け用 Web params 入り）
-5. スマホでそのメールを開き、書いてある通りに SmsForwarder を設定する
-   （メールを再送したいときは URL の末尾に `?resend=1` を付けて開く）
-
-転送先を変えたいときは `settings` シートの「転送先アドレス」を変更します（空欄なら自分宛）。ラベルは「ラベルの付け方」で変更します。
-
-## メールの形
-
-- 件名: `[SMS] <送信元番号>`（端末名は入れない → 同じ番号からの SMS が 1 スレッドにまとまる）
-- ラベル: GAS が自動で付ける（無ければ作る）。`settings` シートの「ラベルの付け方」でSIM名（既定）/ 端末名 / 固定名 / 付けないを切り替えます。Gmail 側のフィルターは使わない
-- 本文: 送信元 / 端末 / SIM / 受信時刻 + SMS 本文
+詳しい手順: **[docs/setup.md](docs/setup.md)**
 
 ## フィルター（`filter` シート）
 
@@ -46,18 +34,42 @@ Android (MacroDroid) --POST--> GAS Web アプリ --> Gmail 送信
 | deny | from | ^0120 | フリーダイヤルからは捨てる |
 | allow | body | 認証\|コード\|code | 認証系だけ通す |
 
-- `type`: `allow` / `deny`
-- `field`: `from`（送信元）/ `body`（本文）/ `device`（端末名）/ `sim`（SIM ニックネーム）
-- `pattern`: 正規表現（大文字小文字は区別しない）
+- `type`: `allow` / `deny`、`field`: `from` / `body` / `device` / `sim`、`pattern`: 正規表現
 - deny が先に評価され、一致したら捨てる
-- allow 行が 1 つも無ければ全部通す。1 つでもあれば allow に一致したものだけ通す
+- allow 行が 1 つも無ければ全部通す。あれば allow に一致したものだけ通す
 - 判定結果は `log` シートの `reason` 列に残る
 
-## コード更新
+## settings シート
 
-```bash
-python ~/.claude/skills/clasp/scripts/run_clasp_push.py --project .clasp.json
-```
+| 項目 | 内容 |
+|---|---|
+| 合言葉* | スマホと共有する合言葉（自動生成。必須） |
+| 転送先アドレス | 空欄なら自分宛 |
+| ラベルの付け方 | SIM名 / 端末名 / 固定名 / 付けない |
+| 固定ラベル名 | 「固定名」のときに使う |
+| 親ラベル | SMS（空なら親ラベルなし） |
+| ログの保持行数 | 1000（超過分は古い行から自動削除） |
+| 未認証も記録する | いいえ（切り分け時だけ「はい」） |
+| ウェブアプリURL* | デプロイ完了画面の公開 URL（必須） |
 
-push しただけでは公開 URL に反映されない。`clasp deployments` で ID を確認し
-`clasp deploy -i <deploymentId>` で既存デプロイを更新する（clasp スキル `references/deploy.md`）。
+`*` は必須項目です。詳しい仕様は [docs/SHEETS_SPEC.md](docs/SHEETS_SPEC.md)。
+
+## ドキュメント
+
+- [初回セットアップ](docs/setup.md)
+- [更新手順](docs/updating.md)
+- [トラブルシューティング](docs/troubleshooting.md)
+- [開発者向け](docs/development.md)
+- [CHANGELOG](CHANGELOG.md)
+- 運用・シート仕様の正本: [docs/OPERATIONS.md](docs/OPERATIONS.md) / [docs/SHEETS_SPEC.md](docs/SHEETS_SPEC.md)
+
+## 関連プロジェクト
+
+端末側アプリの候補:
+
+- [SmsForwarder](https://github.com/pppscn/SmsForwarder) — 標準の端末側。Webhook で GAS へ POST できる
+- [android_income_sms_gateway_webhook](https://github.com/bogkonstantin/android_income_sms_gateway_webhook) — 別の選択肢
+
+シート記録止まりの GAS サンプル（フィルター・メール転送なし）:
+
+- [android-sms-gateway/example-webhooks-google-sheets](https://github.com/android-sms-gateway/example-webhooks-google-sheets)
