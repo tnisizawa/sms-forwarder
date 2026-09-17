@@ -20,7 +20,7 @@ Android (SmsForwarder) --POST--> GAS Web アプリ --> Gmail 送信
 
 ## 3ステップで始める
 
-1. 配布されたコピーリンクを開き「**コピーを作成**」で自分のドライブへコピー
+1. [コピーリンク](https://docs.google.com/spreadsheets/d/1mE3G0dL7AGsBANXDy_07s1P8NrMJBeGb8vWYHwr2PFY/copy)を開き「**コピーを作成**」で自分のドライブへコピー
 2. コピーしたスプレッドシートの「SMS転送」メニューから「**初期設定**」を実行し、権限を承認
 3. ウェブアプリをデプロイして表示された URL を `settings` シートの「ウェブアプリURL*」へ貼り、
    「**スマホの設定手順をメールで送る**」を実行。届いたメールをスマホで開いて進める
