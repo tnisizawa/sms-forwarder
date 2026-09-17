@@ -1,5 +1,5 @@
 /** コードの版。GitHub の Releases / CHANGELOG.md と突き合わせる */
-var VERSION = '1.0.0';
+var VERSION = '1.1.0';
 
 /**
  * SmsForwarder の [card_slot]（"SIM1_a" / "SIM2" など）から備考（ニックネーム）だけを取り出す。
@@ -82,16 +82,20 @@ function encodeMimeSubject_(subject, encodeBase64) {
   return '=?UTF-8?B?' + encodeBase64(sanitizeMimeHeader_(subject)) + '?=';
 }
 
-function buildTextMime_(to, subject, body, encodeBase64) {
-  return [
+function buildTextMime_(to, subject, body, encodeBase64, refs) {
+  var headers = [
     'To: ' + sanitizeMimeHeader_(to),
     'Subject: ' + encodeMimeSubject_(subject, encodeBase64),
+  ];
+  if (refs && refs.inReplyTo) headers.push('In-Reply-To: ' + sanitizeMimeHeader_(refs.inReplyTo));
+  if (refs && refs.references) headers.push('References: ' + sanitizeMimeHeader_(refs.references));
+  return headers.concat([
     'MIME-Version: 1.0',
     'Content-Type: text/plain; charset=UTF-8',
     'Content-Transfer-Encoding: 8bit',
     '',
     normalizeCrlf_(body)
-  ].join('\r\n');
+  ]).join('\r\n');
 }
 
 function buildMultipartMime_(to, subject, plain, html, boundary, encodeBase64) {

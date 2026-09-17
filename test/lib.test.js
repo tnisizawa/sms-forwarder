@@ -329,8 +329,15 @@ test('sendMail_ keeps a successful send successful even if labeling fails', () =
       base64EncodeWebSafe: encodeBase64,
     },
     console: { warn: () => { warnings++; } },
+    PropertiesService: { getScriptProperties: () => ({
+      getProperty: () => null,
+      setProperty: () => {},
+    }) },
     Gmail: { Users: {
-      Messages: { send: () => { sends++; return { id: 'message-1' }; } },
+      Messages: {
+        send: () => { sends++; return { id: 'message-1' }; },
+        get: () => ({ payload: { headers: [] } }),
+      },
       Labels: { list: () => { throw new Error('label API unavailable'); } },
     } },
   });
@@ -629,4 +636,108 @@ test('doPost protects send and cache recording inside one lock', () => {
     put() { assert.equal(f.held(), true); },
   });
   assert.equal(f.app.doPost(receiverEvent()).mailed, true);
+});
+
+test('buildTextMime_ adds threading headers when refs are given', () => {
+  const { buildTextMime_ } = loadLib();
+  const mime = buildTextMime_(
+    'me@example.com',
+    '[SMS転送]',
+    'body',
+    encodeBase64,
+    { inReplyTo: '<m1@mail.gmail.com>', references: '<m1@mail.gmail.com>' },
+  );
+  assert.match(mime, /^In-Reply-To: <m1@mail\.gmail\.com>\r$/m);
+  assert.match(mime, /^References: <m1@mail\.gmail\.com>\r$/m);
+});
+
+test('sendMail_ uses one fixed subject so all forwards share a thread', () => {
+  const raws = [];
+  const { sendMail_ } = loadApp({
+    Utilities: {
+      Charset: { UTF_8: 'UTF-8' },
+      base64Encode: encodeBase64,
+      base64EncodeWebSafe: (v) => Buffer.from(v, 'utf8').toString('base64url'),
+    },
+    PropertiesService: { getScriptProperties: () => ({
+      getProperty: () => null,
+      setProperty: () => {},
+    }) },
+    Gmail: { Users: {
+      Messages: { send: (req) => { raws.push(req.raw); return { id: 'm1' }; } },
+      Labels: { list: () => ({ labels: [] }), create: () => ({ id: 'l' }) },
+    } },
+  });
+  sendMail_({ from: '090-1111', sim: 'a', body: 'x' }, {
+    MAIL_TO: 'me@example.com', LABEL_MODE: 'sim', LABEL_PREFIX: 'SMS',
+  });
+  const mime = Buffer.from(raws[0], 'base64url').toString('utf8');
+  const subject = mime.match(/^Subject: =\?UTF-8\?B\?(.+?)\?=/m)[1];
+  assert.equal(Buffer.from(subject, 'base64').toString('utf8'), '[SMS転送]');
+});
+
+test('sendMail_ stores a thread anchor and chains the next mail into it', () => {
+  const sends = [];
+  const props = {};
+  const { sendMail_ } = loadApp({
+    Utilities: {
+      Charset: { UTF_8: 'UTF-8' },
+      base64Encode: encodeBase64,
+      base64EncodeWebSafe: (v) => Buffer.from(v, 'utf8').toString('base64url'),
+    },
+    PropertiesService: { getScriptProperties: () => ({
+      getProperty: (k) => props[k] ?? null,
+      setProperty: (k, v) => { props[k] = v; },
+    }) },
+    Gmail: { Users: {
+      Messages: {
+        send: (req) => { sends.push(req); return { id: 'm' + sends.length, threadId: 't-1' }; },
+        get: (user, id) => ({ payload: { headers: [{ name: 'Message-Id', value: '<' + id + '@mail.gmail.com>' }] } }),
+      },
+      Labels: { list: () => ({ labels: [] }), create: () => ({ id: 'l' }) },
+    } },
+  });
+  const settings = { MAIL_TO: 'me@example.com', LABEL_MODE: 'sim', LABEL_PREFIX: 'SMS' };
+  sendMail_({ from: '0000', sim: 'a', body: 'one' }, settings);
+  sendMail_({ from: '1111', sim: 'b', body: 'two' }, settings);
+
+  assert.equal(props.MAIL_THREAD_ID, 't-1');
+  assert.equal(props.MAIL_MSG_ID, '<m2@mail.gmail.com>');
+  assert.equal(sends[1].threadId, 't-1');
+  const mime = Buffer.from(sends[1].raw, 'base64url').toString('utf8');
+  assert.match(mime, /^In-Reply-To: <m1@mail\.gmail\.com>/m);
+  assert.match(mime, /^References: <m1@mail\.gmail\.com>/m);
+});
+
+test('sendMail_ falls back to a fresh thread when the stored threadId is stale', () => {
+  const sends = [];
+  const props = { MAIL_THREAD_ID: 't-old', MAIL_MSG_ID: '<old@x>' };
+  const { sendMail_ } = loadApp({
+    Utilities: {
+      Charset: { UTF_8: 'UTF-8' },
+      base64Encode: encodeBase64,
+      base64EncodeWebSafe: (v) => Buffer.from(v, 'utf8').toString('base64url'),
+    },
+    PropertiesService: { getScriptProperties: () => ({
+      getProperty: (k) => props[k] ?? null,
+      setProperty: (k, v) => { props[k] = v; },
+    }) },
+    Gmail: { Users: {
+      Messages: {
+        send: (req) => {
+          sends.push(req);
+          if (req.threadId === 't-old') throw new Error('thread not found');
+          return { id: 'm9', threadId: 't-new' };
+        },
+        get: () => ({ payload: { headers: [{ name: 'Message-Id', value: '<m9@mail.gmail.com>' }] } }),
+      },
+      Labels: { list: () => ({ labels: [] }), create: () => ({ id: 'l' }) },
+    } },
+  });
+  sendMail_({ from: '0000', sim: 'a', body: 'x' }, {
+    MAIL_TO: 'me@example.com', LABEL_MODE: 'sim', LABEL_PREFIX: 'SMS',
+  });
+  assert.equal(sends.length, 2);
+  assert.equal(sends[1].threadId, undefined);
+  assert.equal(props.MAIL_THREAD_ID, 't-new');
 });
