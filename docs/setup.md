@@ -65,16 +65,51 @@
 
 ## 6. スマホ側を設定する
 
-届いたメールをスマホで開き、書かれている通りに進めます。要点は:
+届いたメールをスマホで開き、書かれている通りに進めます。
 
-1. SmsForwarder の APK を GitHub Releases からインストール（「提供元不明のアプリ」の許可が要ります）
-2. 権限を許可する（SMS・電話・通知の表示。電話の権限が無いと SIM 名が取れずラベルが付きません。
-   「通知へのアクセス（Notification listener）」は他アプリの通知転送用なので SMS だけなら不要です。
+### 6-1. インストールと英語化（初回は中国語で出ます）
+
+SmsForwarder の APK を GitHub Releases からインストールします（「提供元不明のアプリ」の許可が要ります）。
+
+**初回起動は中国語で出ます。**「同意」（同意する）を押すと、ヒントのカルーセルが出るので
+「下一条」（次へ）を最後まで進めるか「✗」で閉じてください。
+
+![初回は中国語](images/app-welcome-zh.png) ![中国語のメイン画面](images/app-main-zh.png)
+
+英語への切り替え: 画面下の右端「**通用设置**」（SETTINGS）→ 下までスクロールして
+「**多语言设置**」→「**English**」を選びます。
+
+![言語の切り替え](images/app-language-zh.png)
+
+### 6-2. 権限と端末名
+
+1. 「SETTINGS」タブの「**Forward Sms**」を ON にし、求められた権限を許可します
+   （SMS・電話。電話の権限が無いと SIM 名が取れずラベルが付きません。
+   「通知へのアクセス」は他アプリの通知転送用なので SMS だけなら不要です。
    Android 13 以降で「制限付き設定」と出たら、設定 → アプリ → SmsForwarder →「⋮」→「制限付き設定を許可」）
-3. Device mark（端末名）と SIM の備考（ニックネーム）を付ける — 備考がそのまま Gmail のラベル名になります
-4. Sender を Webhook で作り、メールに書かれた URL と Web params をそのまま貼る。
-   作成画面の「Test」ボタンを押すと、実 SMS を待たずに GAS への疎通を確認できます（`log` シートに1行増えます）
-5. Rule（SMS → All → 作った Sender → 両 SIM）を作って ON
+
+   ![Forward Sms を ON](images/app-settings-en.png)
+
+2. 同じ画面を下へスクロールし、「**Device Name**」に端末名、「**SIM1 SubId/Label**」に
+   その SIM の名前を入れます。この名前が Gmail のラベル名になります
+
+   ![端末名と SIM 名](images/app-device-sim.png)
+
+### 6-3. 送り先（Webhook）
+
+「SENDERS」タブ → 右上「+」→「**Webhook**」を選び、メールに書かれた **Webhook Server**（URL）と
+**Web params** をそのまま貼ります。「Test」を押すと実 SMS を待たずに GAS への疎通を確認できます
+（`log` シートに1行増えます）。できたら「Save」。
+
+![送信先の種類](images/app-sender-type.png) ![Webhook の設定](images/app-sender-webhook.png)
+
+### 6-4. ルール
+
+「RULES」タブ → 右上「+」→ 「Select Sender」に作った Sender、「Field」は「All」、
+「SIM Slot」は「Any SIM」のまま（両 SIM が対象になります。片方だけに変えるともう一方の SMS が転送されません）、
+「Enable This Forwarding Rule」を ON にして「Save」。
+
+![ルールの作成](images/app-rule-add.png)
 
 ## 7. 確認
 
@@ -84,7 +119,7 @@
 ## 複数台に増やすとき
 
 SmsForwarder の「General settings」→「Backup & restore」で設定をファイルに書き出し、
-他の端末で読み込めます。読み込み後に変えるのは **Device mark** だけで構いません。
+他の端末で読み込めます。読み込み後に変えるのは **Device Name** だけで構いません。
 権限・電池最適化・自動起動の許可は端末ごとに手でやり直してください。
 
 - 更新のやり方: [updating.md](updating.md)
