@@ -118,8 +118,13 @@ SmsForwarder の APK を GitHub Releases からインストールします（「
 
 ## 複数台に増やすとき
 
-SmsForwarder の「General settings」→「Backup & restore」で設定をファイルに書き出し、
-他の端末で読み込めます。読み込み後に変えるのは **Device Name** だけで構いません。
+設定をファイル経由で複製できます。左上「≡」→「**Client**」→「**OneKey Clone**」→
+「**Offline**」で「**Export**」（保存先は `Download/SmsForwarder.json`）。
+新しい端末では同じ画面の「**Import**」で読み込みます（両端末のアプリ版を揃えてください）。
+
+![設定のエクスポート/インポート](images/app-onekey-clone.png)
+
+読み込み後に変えるのは **Device Name** だけで構いません。
 権限・電池最適化・自動起動の許可は端末ごとに手でやり直してください。
 
 - 更新のやり方: [updating.md](updating.md)
