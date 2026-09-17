@@ -124,8 +124,9 @@ SmsForwarder の APK を GitHub Releases からインストールします（「
 
 ![設定のエクスポート/インポート](images/app-onekey-clone.png)
 
-読み込み後に変えるのは **Device Name** だけで構いません。
-権限・電池最適化・自動起動の許可は端末ごとに手でやり直してください。
+送り先（Sender）とルールは複製されますが、**個人設定（Device Name・Forward Sms のスイッチ等）は引き継がれません**。
+読み込み後は新しい端末で SETTINGS の Forward Sms を ON にし直し、Device Name と SIM 名を入れてください。
+権限・電池最適化・自動起動の許可も端末ごとに手でやり直します。
 
 - 更新のやり方: [updating.md](updating.md)
 - つまずいたとき: [troubleshooting.md](troubleshooting.md)
