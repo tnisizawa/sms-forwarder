@@ -1,0 +1,9 @@
+# 改行は LF に統一（リポジトリ内・作業ツリーとも）。Git Bash も PowerShell も LF を扱えるため CRLF 変換の差分ノイズを防ぐ
+* text=auto eol=lf
+
+.gitattributes text eol=lf
+*.sh text eol=lf
+.bashrc text eol=lf
+.inputrc text eol=lf
+.tmux.conf text eol=lf
+*.py text eol=lf
