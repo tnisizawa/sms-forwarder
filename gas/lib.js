@@ -1,5 +1,5 @@
 /** コードの版。GitHub の Releases / CHANGELOG.md と突き合わせる */
-var VERSION = '1.1.0';
+var VERSION = '1.2.0';
 
 /**
  * SmsForwarder の [card_slot]（"SIM1_a" / "SIM2" など）から備考（ニックネーム）だけを取り出す。
