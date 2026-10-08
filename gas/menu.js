@@ -28,9 +28,19 @@ function menuSendSetupMail() {
     ui.alert('ウェブアプリをデプロイし、公開画面に表示されたURL（/execで終わる）をsettingsの「ウェブアプリURL」へ貼り付けてください。「ウェブアプリURL」の行がなければ、先に「初期設定」を実行すると行が追加されます。');
     return;
   }
-  sendSetupMail_(Session.getEffectiveUser().getEmail(), settings.TOKEN, url);
+  var response = ui.prompt('スマホの設定手順をメールで送る',
+    '送り先のメールアドレスを入力してください。複数ならカンマ区切り。空欄のまま OK で自分宛に送ります。', ui.ButtonSet.OK_CANCEL);
+  if (response.getSelectedButton() !== ui.Button.OK) return;
+  var recipients = parseRecipients_(response.getResponseText());
+  if (!recipients) {
+    ui.alert('メールアドレスの形式が正しくありません。カンマ区切りで入力し直してください。');
+    return;
+  }
+  var toSelf = !recipients.length;
+  sendSetupMail_(toSelf ? Session.getEffectiveUser().getEmail() : recipients.join(', '), settings.TOKEN, url);
   PropertiesService.getScriptProperties().setProperty('SETUP_MAIL_SENT', new Date().toISOString());
-  ui.alert('自分宛にスマホの設定手順を送りました。スマホでメールを開いて進めてください。');
+  ui.alert((toSelf ? '自分宛に' : '指定した ' + recipients.length + ' 件のアドレスへ') +
+    'スマホの設定手順を送りました。スマホでメールを開いて進めてください。');
 }
 
 function menuTestSend() {

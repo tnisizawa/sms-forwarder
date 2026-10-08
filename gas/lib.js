@@ -98,6 +98,16 @@ function buildTextMime_(to, subject, body, encodeBase64, refs) {
   ]).join('\r\n');
 }
 
+/**
+ * カンマ（全角・読点も可）区切りの宛先入力を配列にする。空なら []、1件でも不正なら null
+ */
+function parseRecipients_(input) {
+  var list = String(input || '').split(/[,，、]/).map(function (s) { return s.trim(); })
+    .filter(function (s) { return s; });
+  var ok = list.every(function (s) { return /^[^\s@,<>"]+@[^\s@,<>"]+\.[^\s@,<>"]+$/.test(s); });
+  return ok ? list : null;
+}
+
 function buildMultipartMime_(to, subject, plain, html, boundary, encodeBase64) {
   var safeBoundary = sanitizeMimeHeader_(boundary).replace(/["\\]/g, '');
   return [

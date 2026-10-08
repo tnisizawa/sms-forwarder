@@ -456,9 +456,12 @@ function sendSetupMail_(to, token, url) {
   h.push('<ol>' +
     '<li>「SETTINGS」タブの「<b>Forward Sms</b>」を ON にし、求められた権限を許可（SMS・電話。電話が無いと SIM 名が取れずラベルが付きません）' +
     '<ul><li>「通知へのアクセス」は他アプリの通知転送用なので SMS だけなら不要</li>' +
-    '<li>Android 13 以降で「制限付き設定」と出たら: 設定 → アプリ → SmsForwarder → 右上「⋮」→「制限付き設定を許可」</li></ul></li>' +
+    '<li>Android 13 以降で「制限付き設定」と出たら: アプリのアイコンを長押し →「アプリ情報」→ 右上「⋮」→「制限付き設定を許可」</li></ul></li>' +
     '<li>同じ画面を下へスクロールし、「<b>Device Name</b>」に端末名（例: phone1）、「<b>SIM1 SubId/Label</b>」に SIM の名前（例: main）を入れる。この名前が Gmail のラベル名になります</li>' +
-    '<li>電池の最適化の除外と自動起動を許可（端末の設定側。止まるときの原因として多い）</li></ol>');
+    '<li>電池の制限を外す（止まる原因として多い）。SmsForwarder のアイコンを長押し →「<b>アプリ情報</b>」を開き、機種ごとに次を選ぶ' +
+    '<ul><li>Pixel: 「アプリのバッテリー使用量」→「<b>制限なし</b>」</li>' +
+    '<li>Galaxy: 「バッテリー」→「<b>制限なし</b>」</li>' +
+    '<li>OPPO: 「バッテリー使用量」→「<b>バックグラウンド動作を許可</b>」と「<b>自動起動を許可</b>」を ON</li></ul></li></ol>');
   h.push('<h3>4. 送り先（Sender）を作る</h3>');
   h.push('<p>「SENDERS」タブ → 右上「+」→「<b>Webhook</b>」を選び、次の通りに入力します（長押しでコピーできます）。</p>');
   h.push('<p>名前</p>' + box('gas-sms'));
@@ -478,7 +481,9 @@ function sendSetupMail_(to, token, url) {
     '2. 英語に切り替える（初回は中国語）: 同意 → 下のバー右端「通用设置」→ 下までスクロール「多语言设置」→ English',
     '3. SETTINGS タブ: Forward Sms を ON → 権限を許可（SMS・電話。通知アクセスは不要）',
     '   同画面の下部: Device Name に端末名、SIM1 SubId/Label に SIM 名（ラベル名になる）',
-    '   電池最適化の除外・自動起動も許可',
+    '   アイコン長押し →「アプリ情報」で電池の制限を外す',
+    '   Pixel: アプリのバッテリー使用量 → 制限なし / Galaxy: バッテリー → 制限なし',
+    '   OPPO: バッテリー使用量 → バックグラウンド動作を許可・自動起動を許可を ON',
     '4. SENDERS → + → Webhook',
     '   名前: gas-sms',
     '   Method: POST',

@@ -12,7 +12,7 @@ const plain = value => JSON.parse(JSON.stringify(value));
 function fixture(initial = {}, old = {}) {
   let held = false;
   let uuid = 0;
-  const calls = { writes: 0, created: [], logs: [], formats: [], validations: [], alerts: [], menu: [] };
+  const calls = { writes: 0, created: [], logs: [], formats: [], validations: [], alerts: [], menu: [], prompts: [], replies: [] };
   const props = { ...old };
   const sheets = {};
   const write = () => { assert.equal(held, true, 'initialization write without lock'); calls.writes++; };
@@ -55,6 +55,13 @@ function fixture(initial = {}, old = {}) {
   const ui = {
     createMenu(name) { calls.menu.push(name); return { addItem(label, handler) { calls.menu.push([label, handler]); return this; }, addToUi() { calls.menu.push('shown'); } }; },
     alert(message) { assert.equal(held, false); calls.alerts.push(message); },
+    prompt(title, message, buttons) {
+      assert.equal(held, false); calls.prompts.push([title, message, buttons]);
+      const [button, text] = calls.replies.shift() || ['ok', ''];
+      return { getSelectedButton: () => button, getResponseText: () => text };
+    },
+    ButtonSet: { OK_CANCEL: 'ok_cancel' },
+    Button: { OK: 'ok', CANCEL: 'cancel', CLOSE: 'close' },
   };
   const validation = () => ({ values: null, invalid: null, requireValueInList(v) { this.values = plain(v); return this; }, setAllowInvalid(v) { this.invalid = v; return this; }, build() { return { values: this.values, invalid: this.invalid }; } });
   const app = vm.createContext({
@@ -246,6 +253,44 @@ test('setup-mail menu sends the pasted URL to the owner without touching ScriptA
   assert.deepEqual(sent, ['owner@example.invalid', f.sheets.settings.data[settingRow(f, '合言葉')][1], VALID_WEB_APP_URL]);
   assert.notEqual(f.props.SETUP_MAIL_SENT, 'old'); assert.equal(f.calls.alerts[0].includes('送りました'), true);
   assert.equal(f.calls.alerts[0].includes('@'), false);
+});
+
+for (const [label, input, expected] of [
+  ['one address', 'friend@example.invalid', 'friend@example.invalid'],
+  ['comma separated with spaces', ' a@example.invalid ,b@example.invalid,, ', 'a@example.invalid, b@example.invalid'],
+  ['full-width comma', 'a@example.invalid、b@example.invalid，c@example.invalid', 'a@example.invalid, b@example.invalid, c@example.invalid'],
+]) {
+  test('setup-mail menu sends to addresses typed in the dialog: ' + label, () => {
+    const f = fixture(); f.app.initSheets(); setWebAppUrl(f, VALID_WEB_APP_URL);
+    f.calls.replies.push(['ok', input]);
+    let sent; f.app.sendSetupMail_ = (...args) => { sent = args; }; f.app.menuSendSetupMail();
+    assert.equal(f.calls.prompts.length, 1); assert.equal(f.calls.prompts[0][2], 'ok_cancel');
+    assert.equal(sent[0], expected); assert.equal(f.calls.alerts[0].includes('送りました'), true);
+  });
+}
+
+for (const button of ['cancel', 'close']) {
+  test('setup-mail menu sends nothing when the dialog is dismissed: ' + button, () => {
+    const f = fixture(); f.app.initSheets(); setWebAppUrl(f, VALID_WEB_APP_URL);
+    f.calls.replies.push([button, 'friend@example.invalid']);
+    f.app.sendSetupMail_ = () => { throw new Error('must not send'); }; f.app.menuSendSetupMail();
+    assert.equal(f.props.SETUP_MAIL_SENT, undefined); assert.equal(f.calls.alerts.length, 0);
+  });
+}
+
+for (const input of ['not-an-address', 'a@example.invalid, broken', 'a@example.invalid\r\nBcc: x@example.invalid', 'a b@example.invalid']) {
+  test('setup-mail menu refuses malformed addresses: ' + JSON.stringify(input), () => {
+    const f = fixture(); f.app.initSheets(); setWebAppUrl(f, VALID_WEB_APP_URL);
+    f.calls.replies.push(['ok', input]);
+    f.app.sendSetupMail_ = () => { throw new Error('must not send'); }; f.app.menuSendSetupMail();
+    assert.equal(f.props.SETUP_MAIL_SENT, undefined); assert.equal(f.calls.alerts[0].includes('メールアドレス'), true);
+  });
+}
+
+test('setup-mail menu does not prompt before the URL check passes', () => {
+  const f = fixture(); f.app.initSheets();
+  f.app.sendSetupMail_ = () => { throw new Error('must not send'); }; f.app.menuSendSetupMail();
+  assert.equal(f.calls.prompts.length, 0);
 });
 
 test('setup-mail menu does not change the sent flag on send failure', () => {
